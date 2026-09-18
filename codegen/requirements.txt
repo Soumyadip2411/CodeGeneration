@@ -1,0 +1,23 @@
+# CodeGen backend requirements
+fastapi>=0.115.0,<1.0.0
+uvicorn[standard]>=0.30.0,<1.0.0
+python-dotenv>=1.0.0,<2.0.0
+pydantic>=2.5.0,<3.0.0
+python-multipart>=0.0.6,<1.0.0
+
+# Azure persistence
+azure-cosmos>=4.7.0,<5.0.0
+azure-storage-blob>=12.19.0,<13.0.0
+azure-core>=1.29.0,<2.0.0
+
+# Cross-cutting helpers (auth headers, audit emitter, cosmos bootstrap)
+-e ../../shared_lib
+
+# Microsoft Agent Framework (MAF) - agentic pipeline
+agent-framework-core==1.8.0
+agent-framework-openai==1.8.0
+openai>=2.2.0,<3.0.0
+
+# Document + diagram generation
+python-docx>=1.1.0,<2.0.0
+Pillow>=10.0.0,<12.0.0

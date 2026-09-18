@@ -1,0 +1,391 @@
+"""Run pipeline - threaded execution with cooperative cancellation.
+
+Lifecycle:
+    POST /runs -> 202 -> pool.submit(execute_run)
+    Worker Thread: setup workspace -> run agent -> upload to blob -> cleanup -> completed
+
+Uses the same patterns as analyzer_backend:
+- ThreadPoolExecutor(4) for bounded background work
+- Cooperative cancellation via shared set + checkpoint checks
+- Event bus binding for real-time UI streaming
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import shutil
+import stat
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from threading import Lock
+from typing import Optional, Tuple
+
+from config import settings
+from services.common import event_bus
+from services.common.progress_store import set_progress
+from services.runs.models import CodegenRun
+from services.runs.repository import get_run_repository
+from services.storage import (
+    artifact_blob_root,
+    download_blob,
+    upload_blob,
+)
+from services.workflows import get_workflow_repository
+from services.files import get_file_repository
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Worker pool - single-process, bounded.
+# ---------------------------------------------------------------------------
+
+_pool_lock = Lock()
+_pool: Optional[ThreadPoolExecutor] = None
+
+
+def _get_pool() -> ThreadPoolExecutor:
+    global _pool
+    if _pool is not None:
+        return _pool
+    with _pool_lock:
+        if _pool is None:
+            _pool = ThreadPoolExecutor(
+                max_workers=4,
+                thread_name_prefix="codegen-worker",
+            )
+    return _pool
+
+
+# ---------------------------------------------------------------------------
+# Cooperative cancellation.
+# ---------------------------------------------------------------------------
+
+_cancel_lock = Lock()
+_cancel_requested: set[str] = set()
+
+
+class RunCancelled(Exception):
+    """Raised inside the worker when a run has been asked to stop."""
+
+
+def request_cancel(run_id: str) -> None:
+    if not run_id:
+        return
+    with _cancel_lock:
+        _cancel_requested.add(run_id)
+
+
+def is_cancel_requested(run_id: str) -> bool:
+    with _cancel_lock:
+        return run_id in _cancel_requested
+
+
+def clear_cancel(run_id: str) -> None:
+    with _cancel_lock:
+        _cancel_requested.discard(run_id)
+
+
+def _check_cancel(run_id: str) -> None:
+    """Raise RunCancelled if a stop has been requested."""
+    if is_cancel_requested(run_id):
+        raise RunCancelled()
+
+
+# ---------------------------------------------------------------------------
+# Progress helper
+# ---------------------------------------------------------------------------
+
+def _emit_progress(
+    run_id: str,
+    step: int,
+    message: str,
+    *,
+    done: bool = False,
+    status: Optional[str] = None,
+) -> None:
+    payload = None
+    if status is not None:
+        payload = {"run_status": status}
+
+    set_progress(run_id, step, message, done=done, payload=payload)
+
+    if status is not None:
+        event_bus.publish_event(
+            run_id,
+            {
+                "type": "run.status",
+                "agent": "orchestrator",
+                "level": "info",
+                "message": message,
+                "data": {"status": status, "done": done, "step": step},
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
+# Execute run (stub - replaced with agent execution in Phase 3)
+# ---------------------------------------------------------------------------
+
+def execute_run(run: CodegenRun) -> CodegenRun:
+    """Main run execution - called on a worker thread.
+
+    Phases:
+    A. Setup workspace + download input files from Blob
+    B. Run MAF agent (reads input, writes code to output/)
+    C. Upload output to Blob
+    D. Cleanup local workspace
+    """
+    runs = get_run_repository()
+    wf_repo = get_workflow_repository()
+    file_repo = get_file_repository()
+
+    with event_bus.bind_run(run.id):
+        runs.mark_running(run)
+        _emit_progress(run.id, 1, "Starting code generation...", status="running")
+
+        # Workspace paths
+        ws_root = Path(settings.workspace_root) / run.workflow_id / run.id
+        input_dir = ws_root / "input"
+        output_dir = ws_root / "output"
+
+        try:
+            # --- Phase A: Setup workspace -------------------------------
+            _check_cancel(run.id)
+            _emit_progress(run.id, 2, "Preparing workspace...")
+            input_dir.mkdir(parents=True, exist_ok=True)
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            # Download input files from Blob
+            files = file_repo.list(run.workflow_id)
+            for f in files:
+                if f.blob_path:
+                    data = download_blob(f.blob_path)
+                    if data:
+                        (input_dir / f.filename).write_bytes(data)
+                        logger.info(
+                            "[pipeline] downloaded %s (%d bytes)",
+                            f.filename,
+                            len(data),
+                        )
+
+            _emit_progress(run.id, 3, f"Downloaded {len(files)} input file(s)")
+
+            # --- Phase B: Run agent ------------------------------------
+            _check_cancel(run.id)
+            _emit_progress(run.id, 4, "Running code generation agent...")
+
+            from services.agent import (
+                make_agent,
+                run_agent_sync,
+                is_llm_ready,
+                configure_workspace,
+                reset_session,
+                build_system_prompt,
+                TASK_PROMPT,
+                ALL_TOOLS,
+            )
+
+            if not is_llm_ready():
+                raise RuntimeError(
+                    "Azure OpenAI not configured (AZURE_OPENAI_ENDPOINT/KEY missing)"
+                )
+
+            # Configure tools to use this run's workspace
+            configure_workspace(input_dir, output_dir)
+            reset_session()
+
+            # Build agent with skill-aware prompt
+            system_prompt = build_system_prompt(language="python")
+            agent = make_agent(
+                name="EUC CodeGen",
+                instructions=system_prompt,
+                tools=ALL_TOOLS,
+            )
+
+            _emit_progress(run.id, 5, "Agent working - generating code...")
+            _check_cancel(run.id)
+
+            # Execute - agent reads input, plans, and writes code
+            response_text, meta = run_agent_sync(agent, TASK_PROMPT)
+            run.agent_trace.append(
+                {"response_preview": response_text[:500], "meta": meta}
+            )
+
+            # Check cancel immediately after agent returns (agent call is
+            # long-blocking, so a cancel request may have arrived during it).
+            _check_cancel(run.id)
+            _emit_progress(run.id, 7, "Agent completed code generation")
+
+            # --- Phase C: Upload to Blob --------------------------------
+            _check_cancel(run.id)
+            _emit_progress(run.id, 8, "Uploading generated code to storage...")
+
+            blob_root = artifact_blob_root(run.workflow_id, run.id)
+            file_count = 0
+            total_bytes = 0
+
+            for file_path in sorted(output_dir.rglob("*")):
+                if file_path.is_file():
+                    _check_cancel(run.id)  # Stop upload if cancelled mid-transfer
+                    rel_path = file_path.relative_to(output_dir)
+                    blob_path = f"{blob_root}/{rel_path.as_posix()}"
+                    data = file_path.read_bytes()
+                    upload_blob(blob_path, data)
+                    file_count += 1
+                    total_bytes += len(data)
+
+            run.artifact_blob_root = blob_root
+            run.artifact_file_count = file_count
+            run.artifact_total_bytes = total_bytes
+
+            _emit_progress(
+                run.id,
+                9,
+                f"Uploaded {file_count} files ({total_bytes // 1024} KB)",
+            )
+
+            # --- Phase D: Cleanup + complete ----------------------------
+            # Persist live events to agent_trace so they survive server restart
+            live_events = event_bus.get_events_since(run.id, 0)
+            run.agent_trace = live_events if live_events else run.agent_trace
+
+            _cleanup_workspace(ws_root)
+
+            runs.mark_completed(run)
+            _emit_progress(run.id, 10, "Completed", done=True, status="completed")
+
+            # Update workflow
+            wf = wf_repo.get_any_owner(run.workflow_id)
+            if wf:
+                if wf.status != "completed":
+                    wf.status = "completed"
+                    wf.latest_run_id = run.id
+                    wf.latest_run_status = "completed"
+                    wf.run_count += 1
+                    wf_repo.upsert(wf)
+
+            logger.info(
+                "[pipeline] completed run=%s files=%d bytes=%d",
+                run.id,
+                file_count,
+                total_bytes,
+            )
+            return run
+
+        except RunCancelled:
+            logger.info("[pipeline] cancelled run=%s", run.id)
+            # The cancel API endpoint may have already marked the run -
+            # only update if still running to avoid overwriting.
+            fresh = runs.get_any(run.id)
+            if fresh and fresh.status not in ("cancelled", "failed", "completed"):
+                runs.mark_cancelled(run, "Cancelled by user")
+
+            _emit_progress(
+                run.id,
+                100,
+                "Cancelled by user",
+                done=True,
+                status="cancelled",
+            )
+
+            # Update workflow (cancel endpoint may have done this already,
+            # but ensure it's set if the pipeline caught the cancel first).
+            wf = wf_repo.get_any_owner(run.workflow_id)
+            if wf and wf.status not in ("completed", "failed", "cancelled"):
+                wf.status = "cancelled"
+                wf.latest_run_status = "cancelled"
+                wf_repo.upsert(wf)
+
+            _cleanup_workspace(ws_root)
+            return run
+
+        except Exception as ex:
+            logger.exception("[pipeline] failed run=%s", run.id)
+            runs.mark_failed(run, str(ex))
+            _emit_progress(
+                run.id,
+                99,
+                f"Failed: {ex}",
+                done=True,
+                status="failed",
+            )
+
+            wf = wf_repo.get_any_owner(run.workflow_id)
+            if wf:
+                wf.status = "failed"
+                wf.latest_run_id = run.id
+                wf.latest_run_status = "failed"
+                wf_repo.upsert(wf)
+
+            _cleanup_workspace(ws_root)
+            return run
+
+        finally:
+            clear_cancel(run.id)
+
+
+def _cleanup_workspace(ws_root: Path) -> None:
+    """Best-effort workspace cleanup.
+
+    Uses an onerror handler to force-remove read-only files on Windows
+    (common when an agent writes files that inherit restrictive ACLs).
+    Only removes the run-level directory ({workflow_id}/{run_id}/),
+    never the parent workflow directory - safe for concurrent runs.
+    """
+
+    def _on_rm_error(func, path, _exc_info):
+        try:
+            os.chmod(path, stat.S_IWRITE)
+            func(path)
+        except Exception:
+            pass  # truly stuck - logged below
+
+    try:
+        if ws_root.exists():
+            shutil.rmtree(ws_root, onerror=_on_rm_error)
+            logger.info("[pipeline] cleaned workspace %s", ws_root)
+    except Exception as exc:
+        logger.warning(
+            "[pipeline] workspace cleanup failed for %s: %s",
+            ws_root,
+            exc,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Public entry points (called by routes)
+# ---------------------------------------------------------------------------
+
+def start_run(
+    *,
+    workflow_id: str,
+    owner_id: str,
+    user_id: str,
+    input_file_ids: list,
+    sync: bool = False,
+) -> Tuple[Optional[CodegenRun], Optional[str]]:
+    """Create a run and submit it to the thread pool. Returns (run, error)."""
+    run = CodegenRun(
+        workflow_id=workflow_id,
+        owner_id=owner_id,
+        triggered_by=user_id,
+        input_file_ids=input_file_ids,
+    )
+
+    runs = get_run_repository()
+    runs.create(run)
+    _emit_progress(run.id, 0, "Queued", status="queued")
+
+    if sync:
+        execute_run(run)
+        return run, None
+
+    _get_pool().submit(execute_run, run)
+    return run, None
+
+
+def cancel_run(run_id: str) -> None:
+    """Signal a running run to stop at the next checkpoint."""
+    request_cancel(run_id)
