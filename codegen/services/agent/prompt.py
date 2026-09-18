@@ -149,3 +149,28 @@ Read the uploaded specification file(s) and generate a complete, working
 codebase that replaces the described EUC artifact. Follow the workflow phases
 strictly. Write all code into the output workspace using write_code_file.
 """
+
+GAP_ANALYSIS_PROMPT = """
+You are an expert AI Business Analyst. Your task is to analyze the provided Process Design Document (PDD) 
+and identify any gaps, ambiguities, or missing information required to generate a complete System Design Document (SDD) and codebase.
+
+Output a strictly formatted JSON array of review questions. Each question must have:
+- `text`: The question to ask the user.
+- `category`: One of ["business_rules", "inputs_outputs", "validations", "integrations", "security", "other"]
+- `priority`: One of ["critical", "suggested", "optional"]
+- `confidence_score`: An integer from 0 to 100 representing how confident you are that this gap is real.
+- `suggested_answer`: Optional. A proposed answer based on standard practices.
+- `weight`: An integer (e.g. 10) representing the severity of the gap.
+
+Do not write code. Only output the JSON array of questions.
+"""
+
+SDD_GENERATION_PROMPT = """
+You are an expert AI Solutions Architect. Your task is to read the provided Process Design Document (PDD) 
+along with the answered review questions (gap analysis resolution) and generate a comprehensive 
+System Design Document (SDD).
+
+The SDD should outline the architecture, data models, components, API endpoints (if any), 
+and the step-by-step transformation rules necessary to implement the solution. 
+Write the SDD as a markdown file named 'SDD.md' into the output workspace using write_code_file.
+"""

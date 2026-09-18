@@ -170,8 +170,9 @@ export async function deleteFile(workflowId, fileId) {
 // Runs (Phase 4)
 // ----------------------------------------------------------------------
 
-export async function startGeneration(workflowId) {
-  const { data } = await codegenApi.post(`/api/codegen/workflows/${workflowId}/runs`, {});
+export async function startGeneration(workflowId, stage = null) {
+  const body = stage ? { stage } : {};
+  const { data } = await codegenApi.post(`/api/codegen/workflows/${workflowId}/runs`, body);
   return data?.run;
 }
 
@@ -184,6 +185,26 @@ export async function cancelRun(runId) {
   const { data } = await codegenApi.post(`/api/codegen/runs/${runId}/cancel`);
   return data?.run;
 }
+
+// ----------------------------------------------------------------------
+// Gap Analysis & SDD
+// ----------------------------------------------------------------------
+
+export async function getQuestions(workflowId) {
+  const { data } = await codegenApi.get(`/api/codegen/workflows/${workflowId}/questions`);
+  return data;
+}
+
+export async function submitAnswers(workflowId, answers) {
+  const { data } = await codegenApi.post(`/api/codegen/workflows/${workflowId}/questions/answers`, { answers });
+  return data;
+}
+
+export async function approveSdd(workflowId) {
+  const { data } = await codegenApi.post(`/api/codegen/workflows/${workflowId}/sdd/approve`);
+  return data;
+}
+
 
 // ----------------------------------------------------------------------
 // Artifacts (Phase 6)

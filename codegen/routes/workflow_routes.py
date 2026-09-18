@@ -177,3 +177,90 @@ async def delete_workflow(
         return _not_found()
 
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Gap Analysis & SDD Endpoints
+# ---------------------------------------------------------------------------
+
+from pydantic import BaseModel
+
+class AnswerSubmit(BaseModel):
+    question_id: str
+    answer: str
+
+class AnswersPayload(BaseModel):
+    answers: list[AnswerSubmit]
+
+@router.get("/api/codegen/workflows/{workflow_id}/questions")
+async def get_questions(
+    workflow_id: str = Path(...),
+    user_id: str = Depends(current_user_id),
+):
+    blocked = _require_cosmos()
+    if blocked:
+        return blocked
+
+    wf = get_workflow_repository().get_any_owner(workflow_id)
+    if not wf:
+        return _not_found()
+
+    return {
+        "ok": True,
+        "questions": [q.model_dump(mode="json") for q in wf.review_questions],
+        "gap_score": wf.current_gap_score,
+        "gap_threshold": wf.gap_threshold_score,
+    }
+
+
+@router.post("/api/codegen/workflows/{workflow_id}/questions/answers")
+async def submit_answers(
+    body: AnswersPayload,
+    workflow_id: str = Path(...),
+    user_id: str = Depends(current_user_id),
+):
+    blocked = _require_cosmos()
+    if blocked:
+        return blocked
+
+    repo = get_workflow_repository()
+    wf = repo.get_any_owner(workflow_id)
+    if not wf:
+        return _not_found()
+
+    answer_dict = {a.question_id: a.answer for a in body.answers}
+    
+    for q in wf.review_questions:
+        if q.id in answer_dict:
+            q.user_answer = answer_dict[q.id]
+            q.is_resolved = True
+
+    wf.current_gap_score = sum(q.weight for q in wf.review_questions if not q.is_resolved)
+    repo.upsert(wf)
+
+    return {
+        "ok": True,
+        "gap_score": wf.current_gap_score,
+        "threshold_met": wf.current_gap_score <= wf.gap_threshold_score,
+    }
+
+
+@router.post("/api/codegen/workflows/{workflow_id}/sdd/approve")
+async def approve_sdd(
+    workflow_id: str = Path(...),
+    user_id: str = Depends(current_user_id),
+):
+    blocked = _require_cosmos()
+    if blocked:
+        return blocked
+
+    repo = get_workflow_repository()
+    wf = repo.get_any_owner(workflow_id)
+    if not wf:
+        return _not_found()
+
+    wf.status = "plan_approved"
+    repo.upsert(wf)
+
+    return {"ok": True, "status": wf.status}
+

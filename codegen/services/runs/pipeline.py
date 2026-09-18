@@ -140,6 +140,15 @@ def execute_run(run: CodegenRun) -> CodegenRun:
     runs = get_run_repository()
     wf_repo = get_workflow_repository()
     file_repo = get_file_repository()
+    
+    wf = wf_repo.get_any_owner(run.workflow_id)
+    if not wf:
+        runs.mark_failed(run, "Workflow not found")
+        return run
+
+    # Default to code_generation if stage is empty for backwards compatibility
+    stage = run.stage or "code_generation"
+
 
     with event_bus.bind_run(run.id):
         runs.mark_running(run)
@@ -184,6 +193,8 @@ def execute_run(run: CodegenRun) -> CodegenRun:
                 reset_session,
                 build_system_prompt,
                 TASK_PROMPT,
+                GAP_ANALYSIS_PROMPT,
+                SDD_GENERATION_PROMPT,
                 ALL_TOOLS,
             )
 
@@ -196,19 +207,53 @@ def execute_run(run: CodegenRun) -> CodegenRun:
             configure_workspace(input_dir, output_dir)
             reset_session()
 
-            # Build agent with skill-aware prompt
-            system_prompt = build_system_prompt(language="python")
-            agent = make_agent(
-                name="EUC CodeGen",
-                instructions=system_prompt,
-                tools=ALL_TOOLS,
-            )
+            import json
+            
+            if stage == "gap_analysis":
+                _emit_progress(run.id, 5, "Agent working - analyzing gaps...")
+                agent = make_agent(name="EUC CodeGen Analyst", instructions=GAP_ANALYSIS_PROMPT, tools=[])
+                response_text, meta = run_agent_sync(agent, "Analyze the PDD for gaps.")
+                
+                try:
+                    # Very basic JSON extraction
+                    start = response_text.find('[')
+                    end = response_text.rfind(']') + 1
+                    if start >= 0 and end > start:
+                        questions_data = json.loads(response_text[start:end])
+                        # Populate workflow
+                        from services.workflows.models import ReviewQuestion
+                        wf.review_questions = [ReviewQuestion(**q) for q in questions_data]
+                        
+                        # Calculate initial gap score
+                        wf.current_gap_score = sum(q.weight for q in wf.review_questions if not q.is_resolved)
+                        wf.status = "waiting_for_answers"
+                    else:
+                        raise ValueError("No JSON array found in output.")
+                except Exception as e:
+                    logger.warning("[pipeline] gap analysis parsing failed: %s. Response: %s", e, response_text)
+                    wf.review_questions = []
+                    wf.status = "waiting_for_answers"
+                    
+            elif stage == "sdd_generation":
+                _emit_progress(run.id, 5, "Agent working - generating SDD...")
+                agent = make_agent(name="EUC CodeGen Architect", instructions=SDD_GENERATION_PROMPT, tools=ALL_TOOLS)
+                # Pass context of questions
+                q_context = json.dumps([q.model_dump(mode="json") for q in wf.review_questions])
+                prompt = f"Here is the resolved Q&A context:\n{q_context}\n\nGenerate the SDD."
+                response_text, meta = run_agent_sync(agent, prompt)
+                wf.status = "plan_generated"
+                
+            else:
+                _emit_progress(run.id, 5, "Agent working - generating code...")
+                system_prompt = build_system_prompt(language="python")
+                agent = make_agent(
+                    name="EUC CodeGen",
+                    instructions=system_prompt,
+                    tools=ALL_TOOLS,
+                )
+                response_text, meta = run_agent_sync(agent, TASK_PROMPT)
+                wf.status = "completed"
 
-            _emit_progress(run.id, 5, "Agent working - generating code...")
-            _check_cancel(run.id)
-
-            # Execute - agent reads input, plans, and writes code
-            response_text, meta = run_agent_sync(agent, TASK_PROMPT)
             run.agent_trace.append(
                 {"response_preview": response_text[:500], "meta": meta}
             )
@@ -257,14 +302,12 @@ def execute_run(run: CodegenRun) -> CodegenRun:
             _emit_progress(run.id, 10, "Completed", done=True, status="completed")
 
             # Update workflow
-            wf = wf_repo.get_any_owner(run.workflow_id)
             if wf:
-                if wf.status != "completed":
-                    wf.status = "completed"
-                    wf.latest_run_id = run.id
-                    wf.latest_run_status = "completed"
-                    wf.run_count += 1
-                    wf_repo.upsert(wf)
+                # status is already updated above based on stage
+                wf.latest_run_id = run.id
+                wf.latest_run_status = "completed"
+                wf.run_count += 1
+                wf_repo.upsert(wf)
 
             logger.info(
                 "[pipeline] completed run=%s files=%d bytes=%d",

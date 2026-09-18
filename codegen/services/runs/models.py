@@ -66,3 +66,4 @@ class RunCreate(BaseModel):
     """Request body for POST /api/codegen/workflows/{id}/runs."""
 
     note: Optional[str] = None
+    stage: Optional[str] = None

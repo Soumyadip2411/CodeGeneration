@@ -26,6 +26,8 @@ import { useToast } from '../../contexts/ToastContext';
 import ProgressSection from '../../components/codegen/ProgressSection';
 import CodeViewSection from '../../components/codegen/CodeViewSection';
 import CodegenMetaBar from '../../components/codegen/CodegenMetaBar';
+import ReviewQuestionsSection from '../../components/codegen/ReviewQuestionsSection';
+import PlanReviewSection from '../../components/codegen/PlanReviewSection';
 
 const TABS = [
   { id: 'summary', label: 'Workflow Summary', icon: FileText },
@@ -228,9 +230,13 @@ export default function WorkflowDetailPage() {
     setStarting(true);
     setActiveTab('progress');
     try {
-      await startGeneration(workflow.id);
+      let stage = 'gap_analysis';
+      if (workflow.status === 'plan_approved') {
+          stage = 'code_generation';
+      }
+      await startGeneration(workflow.id, stage);
       refreshWorkflow();
-      toast.success('Code generation started');
+      toast.success('Agent generation started');
     } catch (err) {
       toast.error(`Failed to start: ${err?.response?.data?.error?.message || err.message || 'Unknown error'}`);
       setActiveTab('summary');
@@ -361,18 +367,10 @@ export default function WorkflowDetailPage() {
         >
           {activeTab === 'summary' && <WorkflowSummarySection workflow={workflow} onRefresh={refreshWorkflow} />}
           {activeTab === 'questions' && (
-            <PlaceholderSection
-              title="Review Questions"
-              icon={MessageSquare}
-              description="The agent will generate clarification questions after reviewing your PDD. You can answer, skip, or accept assumptions."
-            />
+            <ReviewQuestionsSection workflow={workflow} onRefresh={refreshWorkflow} onSwitchTab={setActiveTab} />
           )}
           {activeTab === 'plan' && (
-            <PlaceholderSection
-              title="Intermediate Plan"
-              icon={Map}
-              description="Before generating code, the agent will produce a high-level and low-level design plan for your review and approval."
-            />
+            <PlanReviewSection workflow={workflow} onRefresh={refreshWorkflow} onSwitchTab={setActiveTab} />
           )}
           {activeTab === 'progress' && (
             <ProgressSection workflow={workflow} onSwitchTab={setActiveTab} />
