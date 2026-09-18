@@ -162,6 +162,11 @@ export default function PlanReviewSection({ workflow, onRefresh, onSwitchTab }) 
   const [tocOpen, setTocOpen] = useState(true);
   const toast = useToast();
   const contentRef = useRef(null);
+  // Guard against auto-scroll on mount / content load. Only permit user-initiated jumps.
+  const allowJumpRef = useRef(false);
+  // Save scroll container reference so we can restore position on tab mount
+  const outerScrollContainer = useRef(null);
+  const savedScrollTop = useRef(0);
 
   // Fetch SDD preview
   useEffect(() => {
@@ -196,10 +201,35 @@ export default function PlanReviewSection({ workflow, onRefresh, onSwitchTab }) 
     load();
   }, [workflow.id, workflow.status, workflow.latest_run_id, workflow.sdd_preview_markdown, toast]);
 
+  // On mount, find the outer scroll container (the page-level overflow-y-auto in WorkflowDetailPage)
+  // and preserve + restore its scrollTop so transitions from the review tab don't yank the user view.
+  useEffect(() => {
+    let node = contentRef.current?.parentElement;
+    for (let i = 0; i < 10 && node; i++) {
+      const style = node.style || {};
+      const cs = typeof window !== 'undefined' && window.getComputedStyle ? window.getComputedStyle(node) : null;
+      const overflow = cs?.overflowY || style.overflowY || '';
+      if (overflow === 'auto' || overflow === 'scroll') {
+        outerScrollContainer.current = node;
+        // Restore any saved position
+        if (savedScrollTop.current > 0 && typeof node.scrollTo === 'function') {
+          try { node.scrollTo({ top: savedScrollTop.current, behavior: 'auto' }); } catch { /* ignore */ }
+        }
+        break;
+      }
+      node = node.parentElement;
+    }
+    // After mount, enable user-initiated jumps
+    const t = setTimeout(() => { allowJumpRef.current = true; }, 350);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const sections = useMemo(() => extractSections(previewMarkdown), [previewMarkdown]);
 
   const jumpTo = (slug) => {
     setActiveSection(slug);
+    if (!allowJumpRef.current) return;
     let safe = slug;
     if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
       safe = CSS.escape(slug);
@@ -382,56 +412,58 @@ export default function PlanReviewSection({ workflow, onRefresh, onSwitchTab }) 
         </div>
       ) : previewMarkdown ? (
         <div className="grid grid-cols-1 lg:grid-cols-[240px_minmax(0,1fr)] gap-4">
-          {/* TOC */}
-          <div className="glass-card rounded-xl overflow-hidden self-start lg:sticky lg:top-4 max-h-[calc(100vh-220px)] overflow-y-auto">
-            <button
-              onClick={() => setTocOpen((v) => !v)}
-              className="w-full flex items-center justify-between px-4 py-3 border-b border-border/60 hover:bg-secondary/40 transition-colors"
-            >
-              <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-foreground/80">
-                <List size={12} />
-                Sections
-              </span>
-              <span className="text-muted-foreground lg:hidden">
-                {tocOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-              </span>
-            </button>
-            {(tocOpen || true) && (
-              <nav className="py-2 lg:block">
-                <div className="px-1 pb-1">
-                  {sections.length === 0 ? (
-                    <p className="px-3 py-2 text-[11px] text-muted-foreground/70 italic">
-                      No headings detected.
-                    </p>
-                  ) : (
-                    sections.map((s) => (
-                      <button
-                        key={s.slug + s.index}
-                        onClick={() => jumpTo(s.slug)}
-                        className={cn(
-                          'w-full text-left px-3 py-1.5 rounded-md text-xs transition-colors flex items-center gap-2',
-                          activeSection === s.slug
-                            ? 'bg-primary/15 text-primary font-semibold'
-                            : 'text-muted-foreground hover:text-foreground hover:bg-secondary/60',
-                          s.level === 3 && 'pl-7'
-                        )}
-                        style={{ paddingLeft: `${s.level === 1 ? 12 : s.level === 2 ? 12 : 28}px` }}
-                      >
-                        <span className="flex-1 truncate leading-tight">
-                          {s.title}
-                        </span>
-                      </button>
-                    ))
-                  )}
-                </div>
-              </nav>
-            )}
+          {/* TOC — outer wrapper clips radius; inner nav is fully scrollable */}
+          <div className="glass-card rounded-xl overflow-hidden self-start lg:sticky lg:top-4">
+            <div className="flex flex-col max-h-[calc(100vh-220px)]">
+              <button
+                onClick={() => setTocOpen((v) => !v)}
+                className="flex-shrink-0 w-full flex items-center justify-between px-4 py-3 border-b border-border/60 hover:bg-secondary/40 transition-colors"
+              >
+                <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-foreground/80">
+                  <List size={12} />
+                  Sections
+                </span>
+                <span className="text-muted-foreground lg:hidden">
+                  {tocOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                </span>
+              </button>
+              {(tocOpen || true) && (
+                <nav className="flex-1 min-h-0 overflow-y-auto py-2 lg:block">
+                  <div className="px-1 pb-1">
+                    {sections.length === 0 ? (
+                      <p className="px-3 py-2 text-[11px] text-muted-foreground/70 italic">
+                        No headings detected.
+                      </p>
+                    ) : (
+                      sections.map((s) => (
+                        <button
+                          key={s.slug + s.index}
+                          onClick={() => jumpTo(s.slug)}
+                          className={cn(
+                            'w-full text-left px-3 py-1.5 rounded-md text-xs transition-colors flex items-center gap-2',
+                            activeSection === s.slug
+                              ? 'bg-primary/15 text-primary font-semibold'
+                              : 'text-muted-foreground hover:text-foreground hover:bg-secondary/60',
+                            s.level === 3 && 'pl-7'
+                          )}
+                          style={{ paddingLeft: `${s.level === 1 ? 12 : s.level === 2 ? 12 : 28}px` }}
+                        >
+                          <span className="flex-1 truncate leading-tight">
+                            {s.title}
+                          </span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                </nav>
+              )}
+            </div>
           </div>
 
           {/* Markdown */}
           <div
             ref={contentRef}
-            className="glass-card rounded-xl p-6 md:p-8 min-h-[500px] prose-invert max-w-none scroll-smooth"
+            className="glass-card rounded-xl p-6 md:p-8 min-h-[500px] prose-invert max-w-none"
           >
             <ReactMarkdown components={markdownComponents} skipHtml={false}>
               {previewMarkdown}
@@ -443,8 +475,8 @@ export default function PlanReviewSection({ workflow, onRefresh, onSwitchTab }) 
           <FileDown size={28} className="mx-auto text-muted-foreground/70 mb-3" />
           <h3 className="text-sm font-semibold text-foreground mb-1">SDD not yet available for inline preview</h3>
           <p className="text-xs text-muted-foreground mb-4 max-w-md mx-auto">
-            The SDD has been generated but could not be displayed inline. You can still download the SDD from the Code View tab
-            after code generation, or try running the generation again.
+            The SDD has been generated but could not be displayed inline. Try running the generation again,
+            or revisit the SDD Preview tab after regeneration.
           </p>
           <button
             onClick={() => onSwitchTab && onSwitchTab('questions')}

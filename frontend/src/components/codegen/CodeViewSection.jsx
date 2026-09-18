@@ -9,10 +9,10 @@
 import { useEffect, useState } from 'react';
 import Editor from '@monaco-editor/react';
 import {
-  Folder, File, Download, Loader2, Code2, ChevronRight, ChevronDown, Copy, FileText,
+  Folder, File, Download, Loader2, Code2, ChevronRight, ChevronDown, Copy,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
-import { getArtifactTree, getArtifactFile, exportZip, downloadSdd } from '../../api/codegen';
+import { getArtifactTree, getArtifactFile, exportZip } from '../../api/codegen';
 import { useToast } from '../../contexts/ToastContext';
 
 /** Map file extension to Monaco language ID */
@@ -125,7 +125,6 @@ export default function CodeViewSection({ workflow }) {
   const [fileContent, setFileContent] = useState('');
   const [fileLoading, setFileLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [sddLoading, setSddLoading] = useState(false);
   const toast = useToast();
 
   const runId = workflow.latest_run_id;
@@ -170,25 +169,6 @@ export default function CodeViewSection({ workflow }) {
       toast.error('Export failed');
     } finally {
       setExporting(false);
-    }
-  };
-
-  const handleDownloadSdd = async () => {
-    if (!runId) return;
-    setSddLoading(true);
-    try {
-      const blob = await downloadSdd(runId);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `SDD-${runId.slice(0, 8)}.docx`;
-      a.click();
-      URL.revokeObjectURL(url);
-      toast.success('SDD downloaded');
-    } catch {
-      toast.error('SDD generation failed');
-    } finally {
-      setSddLoading(false);
     }
   };
 
@@ -260,19 +240,6 @@ export default function CodeViewSection({ workflow }) {
       <div className="flex items-center justify-between">
         <span className="text-sm text-muted-foreground">{tree.length} file{tree.length !== 1 ? 's' : ''} generated</span>
         <div className="flex items-center gap-2">
-          <button
-            onClick={handleDownloadSdd}
-            disabled={sddLoading}
-            title="Generate & download the Solution Design Document (.docx)"
-            className={cn(
-              'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors',
-              'border border-border text-foreground hover:bg-secondary',
-              sddLoading && 'opacity-50 cursor-wait'
-            )}
-          >
-            {sddLoading ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
-            {sddLoading ? 'Generating SDD\u2026' : 'Download SDD'}
-          </button>
           <button
             onClick={handleExport}
             disabled={exporting}

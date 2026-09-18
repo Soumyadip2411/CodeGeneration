@@ -236,7 +236,31 @@ export default function WorkflowDetailPage() {
   const [activeTab, setActiveTab] = useState('summary');
   const [starting, setStarting] = useState(false);
   const prevStatusRef = useRef(null);
+  const scrollRef = useRef(null);
+  const scrollPosMap = useRef({});
   const toast = useToast();
+
+  // Switch tabs while preserving the page scroll position. We save/restore the
+  // overflow-y-auto page container so that transitions (review → preview → code)
+  // do not yank the user's view to the top/bottom unexpectedly.
+  const setActiveTabPreservingScroll = (next) => {
+    if (next === activeTab) return;
+    // Save current scroll of the page container
+    const scroller = scrollRef.current;
+    if (scroller) {
+      scrollPosMap.current[activeTab] = scroller.scrollTop || 0;
+    }
+    setActiveTab(next);
+    // After the tab change paints, restore the saved scroll (or 0 for never-visited tabs)
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (scrollRef.current) {
+          const desired = scrollPosMap.current[next] ?? 0;
+          try { scrollRef.current.scrollTo({ top: desired, behavior: 'auto' }); } catch { /* ignore */ }
+        }
+      });
+    });
+  };
 
   useEffect(() => {
     async function load() {
@@ -279,7 +303,7 @@ export default function WorkflowDetailPage() {
 
     // files_uploaded -> generating (gap_analysis started) => jump to Analysis tab
     if (prev !== 'generating' && curr === 'generating') {
-      setActiveTab('analysis');
+      setActiveTabPreservingScroll('analysis');
     }
 
     // Transition from generating -> waiting_for_answers / questions_generated:
@@ -290,21 +314,21 @@ export default function WorkflowDetailPage() {
       (curr === 'waiting_for_answers' || curr === 'questions_generated')
     ) {
       toast.info('Gap analysis complete - questions need your review');
-      setActiveTab('questions');
+      setActiveTabPreservingScroll('questions');
     }
 
     // Transition from generating -> plan_generated:
     // SDD done - jump to SDD Preview tab
     if (prev === 'generating' && curr === 'plan_generated') {
       toast.success('SDD generated - ready for your review and approval');
-      setActiveTab('plan');
+      setActiveTabPreservingScroll('plan');
     }
 
     // Transition from generating -> completed:
     // Code generation done
     if (prev === 'generating' && curr === 'completed') {
       toast.success('Code generation complete');
-      setActiveTab('code');
+      setActiveTabPreservingScroll('code');
     }
 
     prevStatusRef.current = curr;
@@ -355,7 +379,7 @@ export default function WorkflowDetailPage() {
       initialTab = 'progress';
     }
 
-    setActiveTab(initialTab);
+    setActiveTabPreservingScroll(initialTab);
     try {
       await startGeneration(workflow.id, stage);
       refreshWorkflow();
@@ -366,7 +390,7 @@ export default function WorkflowDetailPage() {
       toast.success(stageMsg);
     } catch (err) {
       toast.error(`Failed to start: ${err?.response?.data?.error?.message || err.message || 'Unknown error'}`);
-      setActiveTab('summary');
+      setActiveTabPreservingScroll('summary');
     } finally {
       setStarting(false);
     }
@@ -395,10 +419,10 @@ export default function WorkflowDetailPage() {
   const handleAnalysisCompletion = (completedStage) => {
     if (completedStage === 'gap_analysis') {
       toast.info('Gap analysis complete - proceeding to review');
-      setActiveTab('questions');
+      setActiveTabPreservingScroll('questions');
     } else if (completedStage === 'sdd_generation') {
       toast.success('SDD generated - proceeding to preview');
-      setActiveTab('plan');
+      setActiveTabPreservingScroll('plan');
     }
   };
 
@@ -460,7 +484,7 @@ export default function WorkflowDetailPage() {
         </>
       )}
 
-      <div className="flex-1 overflow-y-auto p-6 max-w-7xl mx-auto w-full space-y-6">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 max-w-7xl mx-auto w-full space-y-6">
         {/* Header */}
         <div className="flex items-start gap-4">
           <button
@@ -501,7 +525,7 @@ export default function WorkflowDetailPage() {
                     toast.info(`${tab.label} is not available yet - complete previous steps first`);
                     return;
                   }
-                  setActiveTab(tab.id);
+                  setActiveTabPreservingScroll(tab.id);
                 }}
                 className={cn(
                   'flex items-center gap-2 px-4 py-2.5 text-sm font-medium whitespace-nowrap',
@@ -531,16 +555,16 @@ export default function WorkflowDetailPage() {
         >
           {activeTab === 'summary' && <WorkflowSummarySection workflow={workflow} onRefresh={refreshWorkflow} />}
           {activeTab === 'analysis' && (
-            <AnalysisSection workflow={workflow} onSwitchTab={setActiveTab} onCompletionStage={handleAnalysisCompletion} />
+            <AnalysisSection workflow={workflow} onSwitchTab={setActiveTabPreservingScroll} onCompletionStage={handleAnalysisCompletion} />
           )}
           {activeTab === 'questions' && (
-            <ReviewQuestionsSection workflow={workflow} onRefresh={refreshWorkflow} onSwitchTab={setActiveTab} />
+            <ReviewQuestionsSection workflow={workflow} onRefresh={refreshWorkflow} onSwitchTab={setActiveTabPreservingScroll} />
           )}
           {activeTab === 'plan' && (
-            <PlanReviewSection workflow={workflow} onRefresh={refreshWorkflow} onSwitchTab={setActiveTab} />
+            <PlanReviewSection workflow={workflow} onRefresh={refreshWorkflow} onSwitchTab={setActiveTabPreservingScroll} />
           )}
           {activeTab === 'progress' && (
-            <ProgressSection workflow={workflow} onSwitchTab={setActiveTab} />
+            <ProgressSection workflow={workflow} onSwitchTab={setActiveTabPreservingScroll} />
           )}
           {activeTab === 'code' && (
             <CodeViewSection workflow={workflow} />
@@ -558,7 +582,7 @@ export default function WorkflowDetailPage() {
           {(activeTab === 'summary' || activeTab === 'analysis' || activeTab === 'questions' || activeTab === 'plan') && (
             isRunning ? (
               <button
-                onClick={() => setActiveTab('progress')}
+                onClick={() => setActiveTabPreservingScroll('progress')}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold bg-secondary text-muted-foreground hover:bg-secondary/80 transition-colors"
               >
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -602,7 +626,7 @@ export default function WorkflowDetailPage() {
               </button>
             ) : isCompleted ? (
               <button
-                onClick={() => setActiveTab('code')}
+                onClick={() => setActiveTabPreservingScroll('code')}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold bg-primary text-primary-foreground hover:bg-primary/90 transition-colors shadow-sm"
               >
                 <Code2 className="w-4 h-4" />
