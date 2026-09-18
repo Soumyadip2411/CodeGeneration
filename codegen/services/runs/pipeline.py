@@ -155,11 +155,11 @@ def execute_run(run: CodegenRun) -> CodegenRun:
 
     with event_bus.bind_run(run.id):
         runs.mark_running(run)
-        start_msg = "Starting code generation from the approved Solution Design Document..."
+        start_msg = "Starting code generation from the approved Solution Design Document (SDD)..."
         if stage == "gap_analysis":
             start_msg = "Starting gap analysis - analyzing uploaded design documents..."
         elif stage == "sdd_generation":
-            start_msg = "Starting SDD generation - synthesizing PDD and resolved gap answers into System Design Document..."
+            start_msg = "Starting SDD generation - synthesizing resolved Q&A and design inputs into System Design Document..."
         _emit_progress(run.id, 1, start_msg, status="running", stage=stage)
 
         # Workspace paths
@@ -220,7 +220,7 @@ def execute_run(run: CodegenRun) -> CodegenRun:
 
             if stage == "gap_analysis":
                 _emit_progress(run.id, 5, "Agent working - analyzing input documents for gaps and ambiguities...", stage=stage)
-                # Gap analysis agent needs access to file-reading tools so it can inspect uploaded PDDs
+                # Gap analysis agent needs access to file-reading tools so it can inspect uploaded design documents
                 agent = make_agent(name="EUC CodeGen Analyst", instructions=GAP_ANALYSIS_PROMPT, tools=ALL_TOOLS)
                 gap_task_prompt = (
                     "TASK:\n"

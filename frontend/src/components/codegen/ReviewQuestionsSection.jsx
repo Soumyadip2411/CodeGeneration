@@ -315,7 +315,8 @@ export default function ReviewQuestionsSection({ workflow, onRefresh, onSwitchTa
       }
     }
     load();
-  }, [workflow.id, toast]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workflow.id]);
 
   const handleAnswerChange = (id, text) => {
     setAnswers((prev) => ({ ...prev, [id]: text }));

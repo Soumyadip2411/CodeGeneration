@@ -151,7 +151,7 @@ strictly. Write all code into the output workspace using write_code_file.
 """
 
 GAP_ANALYSIS_PROMPT = """
-You are an expert AI Business Analyst. Your task is to analyze the provided Process Design Document (PDD)
+You are an expert AI Business Analyst. Your task is to analyze the provided design documents
 and identify gaps, ambiguities, or missing information required to generate a complete System Design Document (SDD) and codebase.
 
 ORGANIZE ALL QUESTIONS INTO THREE PRIMARY GROUPS:
@@ -177,14 +177,14 @@ Do NOT write prose, markdown, or code outside the JSON. Only output the JSON arr
 """
 
 SDD_GENERATION_PROMPT = """
-You are an expert AI Solutions Architect. Your task is to read the provided Process Design Document (PDD)
+You are an expert AI Solutions Architect. Your task is to read the provided design documents
 along with the answered review questions (gap analysis resolution) and generate a comprehensive
 System Design Document (SDD) for the requested solution.
 
 The SDD MUST include the following sections (use proper markdown headings):
 
 1. **Executive Summary** - One-paragraph high-level overview of what this system does and who it serves.
-2. **Functional Requirements** - Numbered list of all required user-facing features, derived from PDD and Q&A.
+2. **Functional Requirements** - Numbered list of all required user-facing features, derived from the design documents and Q&A.
 3. **Non-Functional Requirements** - Security, performance, availability, scalability, audit/compliance.
 4. **System Architecture** - High-level architectural diagram description + component responsibilities.
 5. **Data Model** - Entities, fields, relationships (use markdown tables for schemas). Indicate PII fields.

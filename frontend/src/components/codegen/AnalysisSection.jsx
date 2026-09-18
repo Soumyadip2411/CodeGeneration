@@ -21,9 +21,9 @@ import { useToast } from '../../contexts/ToastContext';
 
 // Define the analysis-step pipelines per stage
 const GAP_ANALYSIS_STEPS = [
-  { id: 'init', label: 'Initializing analysis workspace', icon: FolderOpen, detail: 'Preparing workspace and downloading PDD files' },
-  { id: 'download', label: 'Loading PDD documents', icon: Upload, detail: 'Retrieving uploaded input files from storage' },
-  { id: 'parsing', label: 'Parsing PDD content', icon: FileSearch, detail: 'Reading and understanding document structure' },
+  { id: 'init', label: 'Initializing analysis workspace', icon: FolderOpen, detail: 'Preparing workspace and downloading design documents' },
+  { id: 'download', label: 'Loading design documents', icon: Upload, detail: 'Retrieving uploaded input files from storage' },
+  { id: 'parsing', label: 'Parsing document content', icon: FileSearch, detail: 'Reading and understanding document structure' },
   { id: 'analyzing', label: 'AI gap analysis in progress', icon: Bot, detail: 'Identifying ambiguities, missing requirements, risks' },
   { id: 'categorizing', label: 'Categorizing and scoring questions', icon: Shield, detail: 'Grouping by business rules, I/O, security; applying risk scores' },
   { id: 'suggesting', label: 'Generating suggested answers', icon: Sparkles, detail: 'Drafting AI-proposed answers per industry standards' },
@@ -32,8 +32,8 @@ const GAP_ANALYSIS_STEPS = [
 
 const SDD_ANALYSIS_STEPS = [
   { id: 'init', label: 'Initializing SDD workspace', icon: FolderOpen, detail: 'Preparing workspace and loading Q&A context' },
-  { id: 'download', label: 'Loading PDD and resolved Q&A', icon: Upload, detail: 'Retrieving input files and review answers' },
-  { id: 'reviewing', label: 'Reviewing requirements', icon: FileSearch, detail: 'Synthesizing PDD content with gap analysis answers' },
+  { id: 'download', label: 'Loading design documents and resolved Q&A', icon: Upload, detail: 'Retrieving input files and review answers' },
+  { id: 'reviewing', label: 'Reviewing requirements', icon: FileSearch, detail: 'Synthesizing design inputs with gap analysis answers' },
   { id: 'architecture', label: 'Designing system architecture', icon: Database, detail: 'Drafting modules, data models, component boundaries' },
   { id: 'writing', label: 'Generating SDD sections', icon: Bot, detail: 'Writing architecture, APIs, security, operations sections' },
   { id: 'complete', label: 'SDD generation complete', icon: CheckCircle2, detail: 'SDD document ready for human review and approval' },
@@ -64,6 +64,7 @@ export default function AnalysisSection({ workflow, onSwitchTab, onCompletionSta
   const [events, setEvents] = useState([]);
   const eventsRef = useRef([]);
   const eventsEndRef = useRef(null);
+  const eventsContainerRef = useRef(null);
   const toast = useToast();
   const transitionedRef = useRef(false);
 
@@ -149,9 +150,12 @@ export default function AnalysisSection({ workflow, onSwitchTab, onCompletionSta
     return () => source.close();
   }, [runId, runStatus, latestRun?.agent_trace]);
 
-  // Auto-scroll events
+  // Auto-scroll events - scoped to the events container only, not the page
   useEffect(() => {
-    eventsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const container = eventsContainerRef.current;
+    if (container) {
+      container.scrollTop = container.scrollHeight;
+    }
   }, [events.length]);
 
   // Auto-advance to next HITL tab when analysis completes successfully
@@ -187,7 +191,7 @@ export default function AnalysisSection({ workflow, onSwitchTab, onCompletionSta
         </div>
         <h3 className="text-lg font-semibold text-foreground mb-1">No Analysis Running</h3>
         <p className="text-sm text-muted-foreground max-w-md mb-5">
-          Click <strong>Generate SDD</strong> to begin PDD analysis.
+          Click <strong>Generate SDD</strong> to begin document analysis.
         </p>
         {onSwitchTab && (
           <button
@@ -266,8 +270,8 @@ export default function AnalysisSection({ workflow, onSwitchTab, onCompletionSta
                 : isFailed
                   ? 'Analysis failed - check Progress tab for error details and retry.'
                   : isGap
-                    ? 'AI is analyzing your PDD for ambiguous or missing requirements…'
-                    : 'AI is drafting the SDD from the PDD and resolved Q&A context…'}
+                    ? 'AI is analyzing your design documents for ambiguous or missing requirements…'
+                    : 'AI is drafting the SDD from the uploaded documents and resolved Q&A context…'}
             </p>
             {/* Progress bar */}
             <div>
@@ -392,7 +396,7 @@ export default function AnalysisSection({ workflow, onSwitchTab, onCompletionSta
             {events.length} event{events.length === 1 ? '' : 's'}
           </span>
         </div>
-        <div className="px-4 py-3 max-h-64 overflow-y-auto text-xs">
+        <div ref={eventsContainerRef} className="px-4 py-3 max-h-64 overflow-y-auto text-xs">
           {events.length === 0 ? (
             <p className="text-muted-foreground/70 py-2 text-center">
               {isDone ? 'No events recorded.' : 'Waiting for agent output…'}

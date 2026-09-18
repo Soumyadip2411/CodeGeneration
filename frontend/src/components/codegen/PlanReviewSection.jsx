@@ -345,39 +345,44 @@ export default function PlanReviewSection({ workflow, onRefresh, onSwitchTab }) 
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2 flex-shrink-0">
-            <button
-              onClick={() => {
-                if (previewMarkdown) {
-                  navigator.clipboard?.writeText(previewMarkdown);
-                  toast.success('SDD markdown copied to clipboard');
-                }
-              }}
-              disabled={!previewMarkdown}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-secondary text-foreground hover:bg-secondary/80 transition-colors disabled:opacity-60"
-              title="Copy entire SDD as markdown"
-            >
-              <Copy size={12} />
-              Copy SDD
-            </button>
-            <button
-              onClick={() => {
-                if (!previewMarkdown) return;
-                const blob = new Blob([previewMarkdown], { type: 'text/markdown' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `SDD-${workflow.id.slice(0, 8)}.md`;
-                a.click();
-                URL.revokeObjectURL(url);
-                toast.success('SDD downloaded');
-              }}
-              disabled={!previewMarkdown}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-secondary text-foreground hover:bg-secondary/80 transition-colors disabled:opacity-60"
-              title="Download SDD as Markdown file"
-            >
-              <Download size={12} />
-              Download .md
-            </button>
+            {/* SDD copy/download buttons — only shown during review stage, not after code generation */}
+            {workflow.status !== 'completed' && (
+              <>
+                <button
+                  onClick={() => {
+                    if (previewMarkdown) {
+                      navigator.clipboard?.writeText(previewMarkdown);
+                      toast.success('SDD markdown copied to clipboard');
+                    }
+                  }}
+                  disabled={!previewMarkdown}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-secondary text-foreground hover:bg-secondary/80 transition-colors disabled:opacity-60"
+                  title="Copy entire SDD as markdown"
+                >
+                  <Copy size={12} />
+                  Copy SDD
+                </button>
+                <button
+                  onClick={() => {
+                    if (!previewMarkdown) return;
+                    const blob = new Blob([previewMarkdown], { type: 'text/markdown' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `SDD-${workflow.id.slice(0, 8)}.md`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    toast.success('SDD downloaded');
+                  }}
+                  disabled={!previewMarkdown}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-secondary text-foreground hover:bg-secondary/80 transition-colors disabled:opacity-60"
+                  title="Download SDD as Markdown file"
+                >
+                  <Download size={12} />
+                  Download .md
+                </button>
+              </>
+            )}
             {!isApproved ? (
               <button
                 onClick={handleApprove}
@@ -413,51 +418,49 @@ export default function PlanReviewSection({ workflow, onRefresh, onSwitchTab }) 
       ) : previewMarkdown ? (
         <div className="grid grid-cols-1 lg:grid-cols-[240px_minmax(0,1fr)] gap-4">
           {/* TOC — outer wrapper clips radius; inner nav is fully scrollable */}
-          <div className="glass-card rounded-xl overflow-hidden self-start lg:sticky lg:top-4">
-            <div className="flex flex-col max-h-[calc(100vh-220px)]">
-              <button
-                onClick={() => setTocOpen((v) => !v)}
-                className="flex-shrink-0 w-full flex items-center justify-between px-4 py-3 border-b border-border/60 hover:bg-secondary/40 transition-colors"
-              >
-                <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-foreground/80">
-                  <List size={12} />
-                  Sections
-                </span>
-                <span className="text-muted-foreground lg:hidden">
-                  {tocOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                </span>
-              </button>
-              {(tocOpen || true) && (
-                <nav className="flex-1 min-h-0 overflow-y-auto py-2 lg:block">
-                  <div className="px-1 pb-1">
-                    {sections.length === 0 ? (
-                      <p className="px-3 py-2 text-[11px] text-muted-foreground/70 italic">
-                        No headings detected.
-                      </p>
-                    ) : (
-                      sections.map((s) => (
-                        <button
-                          key={s.slug + s.index}
-                          onClick={() => jumpTo(s.slug)}
-                          className={cn(
-                            'w-full text-left px-3 py-1.5 rounded-md text-xs transition-colors flex items-center gap-2',
-                            activeSection === s.slug
-                              ? 'bg-primary/15 text-primary font-semibold'
-                              : 'text-muted-foreground hover:text-foreground hover:bg-secondary/60',
-                            s.level === 3 && 'pl-7'
-                          )}
-                          style={{ paddingLeft: `${s.level === 1 ? 12 : s.level === 2 ? 12 : 28}px` }}
-                        >
-                          <span className="flex-1 truncate leading-tight">
-                            {s.title}
-                          </span>
-                        </button>
-                      ))
-                    )}
-                  </div>
-                </nav>
-              )}
-            </div>
+          <div className="glass-card rounded-xl self-start lg:sticky lg:top-4 flex flex-col" style={{ maxHeight: 'calc(100vh - 220px)' }}>
+            <button
+              onClick={() => setTocOpen((v) => !v)}
+              className="flex-shrink-0 w-full flex items-center justify-between px-4 py-3 border-b border-border/60 hover:bg-secondary/40 transition-colors rounded-t-xl"
+            >
+              <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-foreground/80">
+                <List size={12} />
+                Sections
+              </span>
+              <span className="text-muted-foreground lg:hidden">
+                {tocOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              </span>
+            </button>
+            {(tocOpen || true) && (
+              <nav className="flex-1 min-h-0 overflow-y-auto py-2 lg:block">
+                <div className="px-1 pb-1">
+                  {sections.length === 0 ? (
+                    <p className="px-3 py-2 text-[11px] text-muted-foreground/70 italic">
+                      No headings detected.
+                    </p>
+                  ) : (
+                    sections.map((s) => (
+                      <button
+                        key={s.slug + s.index}
+                        onClick={() => jumpTo(s.slug)}
+                        className={cn(
+                          'w-full text-left px-3 py-1.5 rounded-md text-xs transition-colors flex items-center gap-2',
+                          activeSection === s.slug
+                            ? 'bg-primary/15 text-primary font-semibold'
+                            : 'text-muted-foreground hover:text-foreground hover:bg-secondary/60',
+                          s.level === 3 && 'pl-7'
+                        )}
+                        style={{ paddingLeft: `${s.level === 1 ? 12 : s.level === 2 ? 12 : 28}px` }}
+                      >
+                        <span className="flex-1 truncate leading-tight">
+                          {s.title}
+                        </span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </nav>
+            )}
           </div>
 
           {/* Markdown */}
@@ -501,7 +504,7 @@ export default function PlanReviewSection({ workflow, onRefresh, onSwitchTab }) 
             </p>
             <ul className="space-y-1.5">
               {[
-                'All functional requirements from the PDD are reflected in the SDD',
+                'All functional requirements from the uploaded design documents are reflected in the SDD',
                 'Security (auth, RBAC, PII, encryption) and compliance requirements are specified',
                 'Data models, schemas, and transformation logic are correct',
                 'Inputs, outputs, validations, and error handling are complete',

@@ -58,6 +58,7 @@ export default function ProgressSection({ workflow, onSwitchTab }) {
   const [latestRun, setLatestRun] = useState(null);
   const [expanded, setExpanded] = useState(true);
   const eventsEndRef = useRef(null);
+  const eventsContainerRef = useRef(null);
   const eventsRef = useRef([]); // Persist events across SSE reconnections
 
   // Load the latest run - poll every 3s while active to pick up new runs + status changes
@@ -135,9 +136,12 @@ export default function ProgressSection({ workflow, onSwitchTab }) {
     return () => source.close();
   }, [latestRun?.id, workflow.latest_run_id, latestRun?.status, workflow.latest_run_status]);
 
-  // Auto-scroll events
+  // Auto-scroll events - scoped to the container, not the whole page
   useEffect(() => {
-    eventsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const container = eventsContainerRef.current;
+    if (container) {
+      container.scrollTop = container.scrollHeight;
+    }
   }, [events.length]);
 
   const runId = latestRun?.id || workflow.latest_run_id;
@@ -256,7 +260,7 @@ export default function ProgressSection({ workflow, onSwitchTab }) {
                     Review Questions Ready - Human Input Required
                   </h4>
                   <p className="text-xs text-muted-foreground mb-3">
-                    The AI has analyzed the PDD and identified gaps that need clarification.
+                    The AI has analyzed your design documents and identified gaps that need clarification.
                     Please review the questions, provide answers, then proceed to SDD generation.
                   </p>
                   <button
@@ -331,7 +335,7 @@ export default function ProgressSection({ workflow, onSwitchTab }) {
           {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
         </button>
         {expanded && (
-          <div className="px-4 pb-3 max-h-72 overflow-y-auto">
+          <div ref={eventsContainerRef} className="px-4 pb-3 max-h-72 overflow-y-auto">
             {events.length === 0 ? (
               <p className="text-xs text-muted-foreground py-2">
                 {isRunning ? 'Waiting for events...' : 'No events recorded for this run.'}

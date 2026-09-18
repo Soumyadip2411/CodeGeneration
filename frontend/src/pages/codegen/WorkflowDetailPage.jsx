@@ -171,7 +171,7 @@ function WorkflowSummarySection({ workflow, onRefresh }) {
           <Upload className="w-10 h-10 text-muted-foreground mx-auto mb-3" />
         )}
         <p className="text-sm font-medium text-foreground">
-          {uploading ? 'Uploading...' : 'Upload PDD or Design Files'}
+          {uploading ? 'Uploading...' : 'Upload Design Documents'}
         </p>
         <p className="text-xs text-muted-foreground mt-1">
           Click to browse. Supported formats: .txt, .md
