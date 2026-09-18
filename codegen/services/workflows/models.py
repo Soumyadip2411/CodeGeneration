@@ -30,11 +30,13 @@ class ReviewQuestion(BaseModel):
     text: str
     category: QuestionCategory = QuestionCategory.OTHER
     priority: QuestionPriority = QuestionPriority.SUGGESTED
-    confidence_score: int = 0  # 0-100 from AI
+    confidence_score: int = 0  # 0-100: how confident AI is that this gap is real
+    risk_score: int = 0  # 0-100: risk/impact score for the gap (higher = more important)
     suggested_answer: Optional[str] = None
     user_answer: Optional[str] = None
     is_resolved: bool = False
     weight: int = 10  # Gap score contribution if unresolved
+    rationale: Optional[str] = None  # Why AI's reasoning for the question (shown to user)
 
 
 
@@ -102,6 +104,13 @@ class Workflow(BaseModel):
     review_questions: List[ReviewQuestion] = Field(default_factory=list)
     gap_threshold_score: int = 30  # Max allowed unresolved gap score to proceed
     current_gap_score: int = 0
+    # Min % of analysis completion (weighted by priority). 80% default = all critical + most suggested
+    min_analysis_completion: int = 80
+    # Risk threshold (0-100). Questions with risk_score >= this are classified as CRITICAL
+    risk_critical_threshold: int = 70
+
+    # SDD Preview markdown - populated after sdd_generation stage, used for inline preview
+    sdd_preview_markdown: Optional[str] = None
 
 
 class WorkflowCreate(BaseModel):

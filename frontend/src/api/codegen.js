@@ -205,6 +205,11 @@ export async function approveSdd(workflowId) {
   return data;
 }
 
+export async function getSddPreview(workflowId) {
+  const { data } = await codegenApi.get(`/api/codegen/workflows/${workflowId}/sdd/preview`);
+  return data;
+}
+
 
 // ----------------------------------------------------------------------
 // Artifacts (Phase 6)

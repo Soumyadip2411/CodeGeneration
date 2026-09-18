@@ -17,6 +17,9 @@ import {
   Calendar,
   X,
   Trash2,
+  Search,
+  CheckCircle2,
+  AlertCircle,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import {
@@ -28,14 +31,75 @@ import CodeViewSection from '../../components/codegen/CodeViewSection';
 import CodegenMetaBar from '../../components/codegen/CodegenMetaBar';
 import ReviewQuestionsSection from '../../components/codegen/ReviewQuestionsSection';
 import PlanReviewSection from '../../components/codegen/PlanReviewSection';
+import AnalysisSection from '../../components/codegen/AnalysisSection';
 
 const TABS = [
   { id: 'summary', label: 'Workflow Summary', icon: FileText },
+  { id: 'analysis', label: 'Analysis', icon: Search },
   { id: 'questions', label: 'Review Questions', icon: MessageSquare },
-  { id: 'plan', label: 'Intermediate Plan', icon: Map },
+  { id: 'plan', label: 'SDD Preview', icon: Map },
   { id: 'progress', label: 'Progress', icon: Activity },
   { id: 'code', label: 'Code View', icon: Code2 },
 ];
+
+// Locked-tab rules: which status gates prevent access to each tab
+function getTabStatus(tabId, workflow) {
+  if (!workflow) return { locked: false, status: 'pending' };
+  const wf = workflow.status;
+  const hasQuestions = workflow.review_questions && workflow.review_questions.length > 0;
+
+  switch (tabId) {
+    case 'summary':
+      return { locked: false, status: 'ok' };
+    case 'analysis':
+      // Accessible once files uploaded / any stage. Complete = green when questions ready
+      if (wf === 'waiting_for_answers' || wf === 'questions_generated' || wf === 'plan_generated' || wf === 'plan_approved' || wf === 'completed') {
+        return { locked: false, status: 'done' };
+      }
+      if (wf === 'generating') return { locked: false, status: 'active' };
+      if (wf === 'failed' || wf === 'cancelled') return { locked: false, status: 'error' };
+      return { locked: workflow.file_count === 0, status: workflow.file_count > 0 ? 'pending' : 'locked' };
+    case 'questions':
+      if (wf === 'waiting_for_answers' || wf === 'questions_generated' || wf === 'plan_generated' || wf === 'plan_approved' || wf === 'completed') {
+        // Green once all critical questions resolved
+        const criticals = (workflow.review_questions || []).filter((q) => q.priority === 'critical');
+        const allCriticalResolved = criticals.length === 0 || criticals.every((q) => q.is_resolved);
+        return { locked: false, status: hasQuestions ? (allCriticalResolved ? 'done' : 'active') : 'pending' };
+      }
+      if (wf === 'generating' && (workflow.latest_run_status === 'running' || workflow.run_count === 0)) {
+        return { locked: true, status: 'locked' };
+      }
+      return { locked: true, status: 'locked' };
+    case 'plan':
+      if (wf === 'plan_generated' || wf === 'plan_approved' || wf === 'completed') {
+        return { locked: false, status: wf === 'plan_approved' || wf === 'completed' ? 'done' : 'active' };
+      }
+      return { locked: true, status: 'locked' };
+    case 'progress':
+      return { locked: false, status: 'ok' };
+    case 'code':
+      if (wf === 'completed') return { locked: false, status: 'done' };
+      return { locked: true, status: 'locked' };
+    default:
+      return { locked: false, status: 'ok' };
+  }
+}
+
+function TabStatusDot({ status }) {
+  if (status === 'done') {
+    return <span className="flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500/10"><CheckCircle2 size={11} className="text-emerald-500" /></span>;
+  }
+  if (status === 'active') {
+    return <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse shadow-[0_0_0_3px_rgba(245,158,11,0.15)]" />;
+  }
+  if (status === 'error') {
+    return <span className="flex h-4 w-4 items-center justify-center rounded-full bg-red-500/10"><AlertCircle size={11} className="text-red-500" /></span>;
+  }
+  if (status === 'locked') {
+    return <Lock size={11} className="text-muted-foreground/50" />;
+  }
+  return null;
+}
 
 function PlaceholderSection({ title, icon: Icon, description }) {
   return (
@@ -199,7 +263,6 @@ export default function WorkflowDetailPage() {
       || workflow.status === 'plan_generated';
     if (!isActive && !justFinished) return;
 
-    // Poll a bit faster for active runs, keep polling short after finish
     const interval = setInterval(() => {
       getWorkflow(workflowId).then(setWorkflow).catch(() => {});
     }, isActive ? 2500 : 3000);
@@ -214,8 +277,14 @@ export default function WorkflowDetailPage() {
 
     if (prev === curr) return;
 
+    // files_uploaded -> generating (gap_analysis started) => jump to Analysis tab
+    if (prev !== 'generating' && curr === 'generating') {
+      setActiveTab('analysis');
+    }
+
     // Transition from generating -> waiting_for_answers / questions_generated:
-    // Gap analysis done, HITL needed - switch to Review Questions tab
+    // Gap analysis done - stay on Analysis briefly (it auto-advances via AnalysisSection CTA)
+    // If we happen to receive this transition directly, jump to questions.
     if (
       prev === 'generating' &&
       (curr === 'waiting_for_answers' || curr === 'questions_generated')
@@ -225,7 +294,7 @@ export default function WorkflowDetailPage() {
     }
 
     // Transition from generating -> plan_generated:
-    // SDD done, HITL approval needed - switch to Intermediate Plan tab
+    // SDD done - jump to SDD Preview tab
     if (prev === 'generating' && curr === 'plan_generated') {
       toast.success('SDD generated - ready for your review and approval');
       setActiveTab('plan');
@@ -270,17 +339,31 @@ export default function WorkflowDetailPage() {
 
   const handleStartGeneration = async () => {
     setStarting(true);
-    setActiveTab('progress');
+
+    // Determine stage + which tab to land on
+    let stage = 'gap_analysis';
+    let initialTab = 'analysis';
+
+    if (workflow.status === 'questions_generated' || workflow.status === 'waiting_for_answers') {
+      stage = 'sdd_generation';
+      initialTab = 'analysis'; // Reuse Analysis tab to show SDD generation progress
+    } else if (workflow.status === 'plan_approved') {
+      stage = 'code_generation';
+      initialTab = 'progress'; // Code gen shows in Progress tab
+    } else if (workflow.status === 'plan_generated') {
+      stage = 'code_generation';
+      initialTab = 'progress';
+    }
+
+    setActiveTab(initialTab);
     try {
-      let stage = 'gap_analysis';
-      if (workflow.status === 'questions_generated' || workflow.status === 'waiting_for_answers') {
-          stage = 'sdd_generation';
-      } else if (workflow.status === 'plan_approved') {
-          stage = 'code_generation';
-      }
       await startGeneration(workflow.id, stage);
       refreshWorkflow();
-      toast.success(stage === 'code_generation' ? 'Code generation started' : 'Agent generation started');
+      const stageMsg =
+        stage === 'gap_analysis' ? 'Gap analysis started'
+          : stage === 'sdd_generation' ? 'SDD generation started'
+            : 'Code generation started';
+      toast.success(stageMsg);
     } catch (err) {
       toast.error(`Failed to start: ${err?.response?.data?.error?.message || err.message || 'Unknown error'}`);
       setActiveTab('summary');
@@ -294,7 +377,10 @@ export default function WorkflowDetailPage() {
       return 'Generate SDD';
     }
     if (workflow.status === 'questions_generated' || workflow.status === 'waiting_for_answers') {
-      return 'Continue to SDD';
+      return 'Proceed to SDD Generation';
+    }
+    if (workflow.status === 'plan_generated') {
+      return 'Approve & Generate Code';
     }
     if (workflow.status === 'plan_approved') {
       return 'Start Code Generation';
@@ -305,6 +391,16 @@ export default function WorkflowDetailPage() {
   function formatDate(iso) {
     return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   }
+
+  const handleAnalysisCompletion = (completedStage) => {
+    if (completedStage === 'gap_analysis') {
+      toast.info('Gap analysis complete - proceeding to review');
+      setActiveTab('questions');
+    } else if (completedStage === 'sdd_generation') {
+      toast.success('SDD generated - proceeding to preview');
+      setActiveTab('plan');
+    }
+  };
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -396,20 +492,31 @@ export default function WorkflowDetailPage() {
           {TABS.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
+            const { locked, status } = getTabStatus(tab.id, workflow);
             return (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => {
+                  if (locked) {
+                    toast.info(`${tab.label} is not available yet - complete previous steps first`);
+                    return;
+                  }
+                  setActiveTab(tab.id);
+                }}
                 className={cn(
                   'flex items-center gap-2 px-4 py-2.5 text-sm font-medium whitespace-nowrap',
-                  'border-b-2 transition-colors',
+                  'border-b-2 transition-colors relative',
                   isActive
                     ? 'border-primary text-primary'
-                    : 'border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground'
+                    : locked
+                      ? 'border-transparent text-muted-foreground/50 cursor-not-allowed'
+                      : 'border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground'
                 )}
+                title={locked ? 'Locked - complete previous steps first' : tab.label}
               >
                 <Icon className="w-4 h-4" />
                 {tab.label}
+                <TabStatusDot status={status} />
               </button>
             );
           })}
@@ -423,6 +530,9 @@ export default function WorkflowDetailPage() {
           transition={{ duration: 0.2 }}
         >
           {activeTab === 'summary' && <WorkflowSummarySection workflow={workflow} onRefresh={refreshWorkflow} />}
+          {activeTab === 'analysis' && (
+            <AnalysisSection workflow={workflow} onSwitchTab={setActiveTab} onCompletionStage={handleAnalysisCompletion} />
+          )}
           {activeTab === 'questions' && (
             <ReviewQuestionsSection workflow={workflow} onRefresh={refreshWorkflow} onSwitchTab={setActiveTab} />
           )}
@@ -444,8 +554,8 @@ export default function WorkflowDetailPage() {
           {workflow.name} · {statusMeta.label}
         </span>
         <div className="flex items-center gap-3">
-          {/* Summary / Questions / Plan tabs: Start or Re-run */}
-          {(activeTab === 'summary' || activeTab === 'questions' || activeTab === 'plan') && (
+          {/* Analysis / Questions / Plan / Summary tabs: Start or Re-run or View Progress */}
+          {(activeTab === 'summary' || activeTab === 'analysis' || activeTab === 'questions' || activeTab === 'plan') && (
             isRunning ? (
               <button
                 onClick={() => setActiveTab('progress')}
@@ -457,7 +567,7 @@ export default function WorkflowDetailPage() {
             ) : (
               <button
                 onClick={handleStartGeneration}
-                disabled={workflow.file_count === 0 || starting}
+                disabled={workflow.file_count === 0 || starting || (activeTab === 'plan' && workflow.status !== 'plan_approved' && workflow.status !== 'plan_generated')}
                 className={cn(
                   'flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-semibold transition-colors shadow-sm',
                   workflow.file_count > 0 && !starting
@@ -479,7 +589,6 @@ export default function WorkflowDetailPage() {
                   try {
                     await cancelRun(workflow.latest_run_id);
                     toast.success('Run cancellation requested');
-                    // Refresh immediately + again after a short delay to catch Cosmos write
                     refreshWorkflow();
                     setTimeout(refreshWorkflow, 2000);
                   } catch {

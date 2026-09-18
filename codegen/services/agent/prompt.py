@@ -151,26 +151,56 @@ strictly. Write all code into the output workspace using write_code_file.
 """
 
 GAP_ANALYSIS_PROMPT = """
-You are an expert AI Business Analyst. Your task is to analyze the provided Process Design Document (PDD) 
-and identify any gaps, ambiguities, or missing information required to generate a complete System Design Document (SDD) and codebase.
+You are an expert AI Business Analyst. Your task is to analyze the provided Process Design Document (PDD)
+and identify gaps, ambiguities, or missing information required to generate a complete System Design Document (SDD) and codebase.
 
-Output a strictly formatted JSON array of review questions. Each question must have:
-- `text`: The question to ask the user.
-- `category`: One of ["business_rules", "inputs_outputs", "validations", "integrations", "security", "other"]
-- `priority`: One of ["critical", "suggested", "optional"]
-- `confidence_score`: An integer from 0 to 100 representing how confident you are that this gap is real.
-- `suggested_answer`: Optional. A proposed answer based on standard practices.
-- `weight`: An integer (e.g. 10) representing the severity of the gap.
+ORGANIZE ALL QUESTIONS INTO THREE PRIMARY GROUPS:
+1. **business_rules** - Business logic, decision rules, workflow logic, domain requirements, edge-case handling, SLAs
+2. **inputs_outputs** - Data sources, file formats, schemas, output formats, APIs, validations, integrations, transformations
+3. **security** - Authentication, authorization, PII handling, encryption, role-based access, audit/compliance, input sanitization
 
-Do not write code. Only output the JSON array of questions.
+If a question does not fit one of the three buckets above, categorize it as "other".
+
+Output a strictly formatted JSON array of review questions. Each question MUST have:
+- `text`: A clear, specific question the user must answer (NOT generic).
+- `category`: One of ["business_rules", "inputs_outputs", "security", "other"].  Prefer the three primary categories.
+- `priority`: One of ["critical", "suggested", "optional"].  CRITICAL = must be answered before code; SUGGESTED = strongly recommended; OPTIONAL = nice-to-have.
+- `confidence_score`: Integer 0-100. How confident you are that this gap is REAL and NOT already addressed implicitly. Higher = more confident the gap exists.
+- `risk_score`: Integer 0-100. Impact/severity if left unanswered. Scores >= 70 MUST be marked priority=critical.  Examples: security flaws = 80-100, data integrity issues = 70-90, cosmetic/documentation = 10-30.
+- `weight`: Integer contribution to the overall gap score. CRITICAL = 20-30, SUGGESTED = 10-15, OPTIONAL = 1-5.
+- `suggested_answer`: A detailed, actionable proposed answer based on industry/banking-standard best practices. Include reasoning. Must not be empty if priority is optional.
+- `rationale`: A brief 1-2 sentence explanation of WHY this question is being asked (so the user understands the risk / downstream impact).
+
+AIM FOR A TOTAL OF 8-15 questions. At least 2 per primary category.
+
+Do NOT write prose, markdown, or code outside the JSON. Only output the JSON array.
 """
 
 SDD_GENERATION_PROMPT = """
-You are an expert AI Solutions Architect. Your task is to read the provided Process Design Document (PDD) 
-along with the answered review questions (gap analysis resolution) and generate a comprehensive 
-System Design Document (SDD).
+You are an expert AI Solutions Architect. Your task is to read the provided Process Design Document (PDD)
+along with the answered review questions (gap analysis resolution) and generate a comprehensive
+System Design Document (SDD) for the requested solution.
 
-The SDD should outline the architecture, data models, components, API endpoints (if any), 
-and the step-by-step transformation rules necessary to implement the solution. 
-Write the SDD as a markdown file named 'SDD.md' into the output workspace using write_code_file.
+The SDD MUST include the following sections (use proper markdown headings):
+
+1. **Executive Summary** - One-paragraph high-level overview of what this system does and who it serves.
+2. **Functional Requirements** - Numbered list of all required user-facing features, derived from PDD and Q&A.
+3. **Non-Functional Requirements** - Security, performance, availability, scalability, audit/compliance.
+4. **System Architecture** - High-level architectural diagram description + component responsibilities.
+5. **Data Model** - Entities, fields, relationships (use markdown tables for schemas). Indicate PII fields.
+6. **Inputs & Outputs** - Accepted file formats/schemas, produced outputs, validation rules per input.
+7. **Business Rules & Transformation Logic** - Step-by-step processing rules and calculations.
+8. **API Endpoints / Interfaces** - REST endpoints (or file-based interface) with request/response schemas.
+9. **Security & Access Control** - Roles, authN/Z, PII handling, encryption, RBAC matrix, audit.
+10. **Error Handling & Observability** - Error categories, retry strategy, logging, monitoring, alerts.
+11. **Operational Runbook** - Deployment steps, backup/restore, support escalation, SLA numbers.
+12. **Implementation Plan & Milestones** - Phases with deliverables and estimates.
+
+Use tables, lists, and consistent terminology. Be specific (avoid "TBD"). Wherever a choice exists
+(technology, approach), recommend one with a brief justification.
+
+Write the complete SDD as markdown:
+1. First write the file named 'SDD.md' into the output workspace using write_code_file.
+2. Then, as your very last action, emit a code block labelled SDD_PREVIEW_MARKDOWN that repeats
+   the full SDD markdown text verbatim so it can be captured from your response for preview purposes.
 """

@@ -221,17 +221,33 @@ def execute_run(run: CodegenRun) -> CodegenRun:
                 _emit_progress(run.id, 5, "Agent working - analyzing gaps...", stage=stage)
                 agent = make_agent(name="EUC CodeGen Analyst", instructions=GAP_ANALYSIS_PROMPT, tools=[])
                 response_text, meta = run_agent_sync(agent, "Analyze the PDD for gaps.")
-                
+
                 try:
                     # Very basic JSON extraction
                     start = response_text.find('[')
                     end = response_text.rfind(']') + 1
                     if start >= 0 and end > start:
                         questions_data = json.loads(response_text[start:end])
-                        # Populate workflow
-                        from services.workflows.models import ReviewQuestion
-                        wf.review_questions = [ReviewQuestion(**q) for q in questions_data]
-                        
+                        from services.workflows.models import ReviewQuestion, QuestionPriority
+
+                        parsed: list[ReviewQuestion] = []
+                        for q in questions_data:
+                            rq = ReviewQuestion(**q)
+                            # Enforce risk threshold classification: risk >= critical threshold => critical
+                            if rq.risk_score and rq.risk_score >= (wf.risk_critical_threshold or 70):
+                                rq.priority = QuestionPriority.CRITICAL
+                            # Ensure a weight proportional to priority if weight looks off
+                            if not rq.weight or rq.weight <= 0:
+                                if rq.priority == QuestionPriority.CRITICAL:
+                                    rq.weight = 25
+                                elif rq.priority == QuestionPriority.SUGGESTED:
+                                    rq.weight = 12
+                                else:
+                                    rq.weight = 3
+                            parsed.append(rq)
+
+                        wf.review_questions = parsed
+
                         # Calculate initial gap score
                         wf.current_gap_score = sum(q.weight for q in wf.review_questions if not q.is_resolved)
                         wf.status = "waiting_for_answers"
@@ -241,14 +257,52 @@ def execute_run(run: CodegenRun) -> CodegenRun:
                     logger.warning("[pipeline] gap analysis parsing failed: %s. Response: %s", e, response_text)
                     wf.review_questions = []
                     wf.status = "waiting_for_answers"
-                    
+
             elif stage == "sdd_generation":
                 _emit_progress(run.id, 5, "Agent working - generating SDD...", stage=stage)
                 agent = make_agent(name="EUC CodeGen Architect", instructions=SDD_GENERATION_PROMPT, tools=ALL_TOOLS)
-                # Pass context of questions
                 q_context = json.dumps([q.model_dump(mode="json") for q in wf.review_questions])
                 prompt = f"Here is the resolved Q&A context:\n{q_context}\n\nGenerate the SDD."
                 response_text, meta = run_agent_sync(agent, prompt)
+
+                # Extract SDD markdown preview from the agent response.
+                # Try, in order: labelled SDD_PREVIEW_MARKDOWN code block, first ```markdown block, raw response head
+                sdd_preview_markdown: str | None = None
+                try:
+                    import re as _re
+                    m = _re.search(
+                        r"```(?:SDD_PREVIEW_MARKDOWN|markdown|md)?\s*\n(.*?)```",
+                        response_text,
+                        _re.DOTALL | _re.IGNORECASE,
+                    )
+                    if m:
+                        sdd_preview_markdown = m.group(1).strip()
+                    else:
+                        # Fallback: if the response wrote SDD.md and we can load it
+                        pass
+                except Exception:
+                    sdd_preview_markdown = None
+
+                # Fallback: try reading SDD.md back from the output workspace (it was just written)
+                if not sdd_preview_markdown:
+                    try:
+                        candidate = (output_dir / "SDD.md")
+                        if candidate.exists():
+                            sdd_preview_markdown = candidate.read_text(encoding="utf-8", errors="replace")
+                    except Exception:
+                        sdd_preview_markdown = None
+
+                # Final fallback: store a truncated snippet of the raw response so preview is never empty
+                if not sdd_preview_markdown:
+                    sdd_preview_markdown = (
+                        "# SDD (Preview)\n\n"
+                        "> The architect response could not be parsed into markdown. "
+                        "Please use the 'Download SDD' or view the generated SDD.md in the Code View "
+                        "tab after code generation to inspect the full document.\n\n"
+                        f"```\n{response_text[:4000]}\n```\n"
+                    )
+
+                wf.sdd_preview_markdown = sdd_preview_markdown  # type: ignore[attr-defined]
                 wf.status = "plan_generated"
                 
             else:

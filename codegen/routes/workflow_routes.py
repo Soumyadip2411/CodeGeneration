@@ -205,11 +205,41 @@ async def get_questions(
     if not wf:
         return _not_found()
 
+    def _weighted_score(q) -> int:
+        if q.priority == "critical":
+            return 3
+        if q.priority == "suggested":
+            return 2
+        return 1
+
+    total_weighted = sum(_weighted_score(q) for q in wf.review_questions)
+    resolved_weighted = sum(
+        _weighted_score(q) for q in wf.review_questions if q.is_resolved
+    )
+    completion_pct = (
+        round((resolved_weighted / total_weighted) * 100)
+        if total_weighted > 0
+        else 100
+    )
+    critical_unresolved = [
+        q.id for q in wf.review_questions if q.priority == "critical" and not q.is_resolved
+    ]
+
     return {
         "ok": True,
         "questions": [q.model_dump(mode="json") for q in wf.review_questions],
         "gap_score": wf.current_gap_score,
         "gap_threshold": wf.gap_threshold_score,
+        "min_analysis_completion": wf.min_analysis_completion,
+        "risk_critical_threshold": wf.risk_critical_threshold,
+        "completion_pct": completion_pct,
+        "all_critical_resolved": len(critical_unresolved) == 0,
+        "unresolved_critical_ids": critical_unresolved,
+        "can_proceed_to_sdd": (
+            len(critical_unresolved) == 0
+            and completion_pct >= (wf.min_analysis_completion or 80)
+            and wf.current_gap_score <= wf.gap_threshold_score
+        ),
     }
 
 
@@ -263,4 +293,53 @@ async def approve_sdd(
     repo.upsert(wf)
 
     return {"ok": True, "status": wf.status}
+
+
+@router.get("/api/codegen/workflows/{workflow_id}/sdd/preview")
+async def get_sdd_preview(
+    workflow_id: str = Path(...),
+    user_id: str = Depends(current_user_id),
+):
+    """Return the SDD markdown preview (inlined on workflow) for the UI.
+
+    Falls back to reading SDD.md from the latest run's artifacts if present and
+    the inline preview has not been populated.
+    """
+    blocked = _require_cosmos()
+    if blocked:
+        return blocked
+
+    repo = get_workflow_repository()
+    wf = repo.get_any_owner(workflow_id)
+    if not wf:
+        return _not_found()
+
+    markdown = (wf.sdd_preview_markdown or "").strip()
+    artifact_read_error = None
+
+    # Fallback: try reading SDD.md from the latest run's output dir if we have no inline markdown
+    if not markdown and wf.latest_run_id:
+        try:
+            from config import settings
+            from pathlib import Path
+
+            candidate = (
+                Path(settings.workspace_root)
+                / wf.id
+                / wf.latest_run_id
+                / "output"
+                / "SDD.md"
+            )
+            if candidate.exists():
+                markdown = candidate.read_text(encoding="utf-8", errors="replace")
+        except Exception as ex:
+            artifact_read_error = str(ex)
+
+    return {
+        "ok": True,
+        "markdown": markdown,
+        "status": wf.status,
+        "approved": wf.status == "plan_approved" or wf.status == "completed",
+        "artifact_read_error": artifact_read_error,
+    }
 
