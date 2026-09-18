@@ -104,14 +104,17 @@ def _emit_progress(
     *,
     done: bool = False,
     status: Optional[str] = None,
+    stage: Optional[str] = None,
 ) -> None:
-    payload = None
+    payload = {}
     if status is not None:
-        payload = {"run_status": status}
+        payload["run_status"] = status
+    if stage is not None:
+        payload["stage"] = stage
 
-    set_progress(run_id, step, message, done=done, payload=payload)
+    set_progress(run_id, step, message, done=done, payload=payload if payload else None)
 
-    if status is not None:
+    if status is not None or stage is not None:
         event_bus.publish_event(
             run_id,
             {
@@ -119,7 +122,7 @@ def _emit_progress(
                 "agent": "orchestrator",
                 "level": "info",
                 "message": message,
-                "data": {"status": status, "done": done, "step": step},
+                "data": {"status": status, "stage": stage, "done": done, "step": step},
             },
         )
 
@@ -152,7 +155,12 @@ def execute_run(run: CodegenRun) -> CodegenRun:
 
     with event_bus.bind_run(run.id):
         runs.mark_running(run)
-        _emit_progress(run.id, 1, "Starting code generation...", status="running")
+        start_msg = "Starting code generation..."
+        if stage == "gap_analysis":
+            start_msg = "Starting gap analysis - scanning PDD for questions..."
+        elif stage == "sdd_generation":
+            start_msg = "Starting SDD generation with resolved Q&A context..."
+        _emit_progress(run.id, 1, start_msg, status="running", stage=stage)
 
         # Workspace paths
         ws_root = Path(settings.workspace_root) / run.workflow_id / run.id
@@ -210,7 +218,7 @@ def execute_run(run: CodegenRun) -> CodegenRun:
             import json
             
             if stage == "gap_analysis":
-                _emit_progress(run.id, 5, "Agent working - analyzing gaps...")
+                _emit_progress(run.id, 5, "Agent working - analyzing gaps...", stage=stage)
                 agent = make_agent(name="EUC CodeGen Analyst", instructions=GAP_ANALYSIS_PROMPT, tools=[])
                 response_text, meta = run_agent_sync(agent, "Analyze the PDD for gaps.")
                 
@@ -235,7 +243,7 @@ def execute_run(run: CodegenRun) -> CodegenRun:
                     wf.status = "waiting_for_answers"
                     
             elif stage == "sdd_generation":
-                _emit_progress(run.id, 5, "Agent working - generating SDD...")
+                _emit_progress(run.id, 5, "Agent working - generating SDD...", stage=stage)
                 agent = make_agent(name="EUC CodeGen Architect", instructions=SDD_GENERATION_PROMPT, tools=ALL_TOOLS)
                 # Pass context of questions
                 q_context = json.dumps([q.model_dump(mode="json") for q in wf.review_questions])
@@ -244,7 +252,7 @@ def execute_run(run: CodegenRun) -> CodegenRun:
                 wf.status = "plan_generated"
                 
             else:
-                _emit_progress(run.id, 5, "Agent working - generating code...")
+                _emit_progress(run.id, 5, "Agent working - generating code...", stage=stage)
                 system_prompt = build_system_prompt(language="python")
                 agent = make_agent(
                     name="EUC CodeGen",
@@ -261,7 +269,13 @@ def execute_run(run: CodegenRun) -> CodegenRun:
             # Check cancel immediately after agent returns (agent call is
             # long-blocking, so a cancel request may have arrived during it).
             _check_cancel(run.id)
-            _emit_progress(run.id, 7, "Agent completed code generation")
+
+            stage_complete_msg = "Agent completed code generation"
+            if stage == "gap_analysis":
+                stage_complete_msg = "Gap analysis complete - review questions ready"
+            elif stage == "sdd_generation":
+                stage_complete_msg = "SDD generation complete - ready for review"
+            _emit_progress(run.id, 7, stage_complete_msg, stage=stage)
 
             # --- Phase C: Upload to Blob --------------------------------
             _check_cancel(run.id)
@@ -299,7 +313,19 @@ def execute_run(run: CodegenRun) -> CodegenRun:
             _cleanup_workspace(ws_root)
 
             runs.mark_completed(run)
-            _emit_progress(run.id, 10, "Completed", done=True, status="completed")
+            complete_msg = "Completed"
+            if stage == "gap_analysis":
+                complete_msg = "Gap Analysis Completed - Review Required"
+            elif stage == "sdd_generation":
+                complete_msg = "SDD Generated - Ready for Approval"
+            _emit_progress(
+                run.id,
+                10,
+                complete_msg,
+                done=True,
+                status="completed",
+                stage=stage,
+            )
 
             # Update workflow
             if wf:

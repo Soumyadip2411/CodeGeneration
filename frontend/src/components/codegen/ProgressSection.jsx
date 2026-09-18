@@ -13,7 +13,7 @@
 import { useEffect, useState, useRef } from 'react';
 import {
   Activity, CheckCircle2, XCircle, Loader2, Clock,
-  Wrench, Bot, ChevronDown, ChevronUp,
+  Wrench, Bot, ChevronDown, ChevronUp, MessageSquare, Map, Code2, AlertTriangle,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { getServiceBaseUrl } from '../../api/serviceClients';
@@ -145,6 +145,12 @@ export default function ProgressSection({ workflow, onSwitchTab }) {
   const isDone = progress?.done || ['completed', 'failed', 'cancelled'].includes(status);
   const isRunning = status === 'running' || status === 'queued';
 
+  // Determine which stage completed for the HITL next-step card
+  const completedStage =
+    isDone && status === 'completed'
+      ? progress?.payload?.stage || latestRun?.stage || workflow.stage || ''
+      : '';
+
   // Token usage - find the agent.end event or old-format summary with token data
   const agentTrace = latestRun?.agent_trace || [];
   const tokenEntry = agentTrace.find((e) =>
@@ -225,6 +231,88 @@ export default function ProgressSection({ workflow, onSwitchTab }) {
             <div className="rounded-lg border border-border bg-background px-3 py-2">
               <p className="text-[10px] text-muted-foreground uppercase">Duration</p>
               <p className="text-xs font-semibold text-foreground">{formatDuration(tokenData.duration_ms || tokenData.ms)}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* HITL next-step card - shown when a stage completes successfully that needs human review */}
+      {isDone && status === 'completed' && (completedStage === 'gap_analysis' || completedStage === 'sdd_generation' || workflow.status === 'waiting_for_answers' || workflow.status === 'questions_generated' || workflow.status === 'plan_generated') && (
+        <div className="glass-card p-5 border-l-4 border-amber-500 bg-amber-500/5">
+          <div className="flex items-start gap-3">
+            <div className="flex-shrink-0 p-2 rounded-lg bg-amber-500/10">
+              {completedStage === 'gap_analysis' || workflow.status === 'waiting_for_answers' || workflow.status === 'questions_generated' ? (
+                <MessageSquare size={20} className="text-amber-500" />
+              ) : workflow.status === 'plan_generated' || completedStage === 'sdd_generation' ? (
+                <Map size={20} className="text-purple-500" />
+              ) : (
+                <AlertTriangle size={20} className="text-amber-500" />
+              )}
+            </div>
+            <div className="flex-1 min-w-0">
+              {(completedStage === 'gap_analysis' || workflow.status === 'waiting_for_answers' || workflow.status === 'questions_generated') && (
+                <>
+                  <h4 className="text-sm font-semibold text-foreground mb-1">
+                    Review Questions Ready - Human Input Required
+                  </h4>
+                  <p className="text-xs text-muted-foreground mb-3">
+                    The AI has analyzed the PDD and identified gaps that need clarification.
+                    Please review the questions, provide answers, then proceed to SDD generation.
+                  </p>
+                  <button
+                    onClick={() => onSwitchTab && onSwitchTab('questions')}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-amber-500 text-white hover:bg-amber-600 transition-colors shadow-sm"
+                  >
+                    <MessageSquare size={14} />
+                    Go to Review Questions
+                  </button>
+                </>
+              )}
+              {(workflow.status === 'plan_generated' || completedStage === 'sdd_generation') && (
+                <>
+                  <h4 className="text-sm font-semibold text-foreground mb-1">
+                    SDD Preview Ready - Review and Approve
+                  </h4>
+                  <p className="text-xs text-muted-foreground mb-3">
+                    The System Design Document has been generated. Please review it and approve
+                    to proceed with code generation.
+                  </p>
+                  <button
+                    onClick={() => onSwitchTab && onSwitchTab('plan')}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-purple-500 text-white hover:bg-purple-600 transition-colors shadow-sm"
+                  >
+                    <Map size={14} />
+                    View SDD Preview
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Code generation complete card */}
+      {isDone && status === 'completed' && workflow.status === 'completed' && completedStage !== 'gap_analysis' && completedStage !== 'sdd_generation' && (
+        <div className="glass-card p-5 border-l-4 border-emerald-500 bg-emerald-500/5">
+          <div className="flex items-start gap-3">
+            <div className="flex-shrink-0 p-2 rounded-lg bg-emerald-500/10">
+              <CheckCircle2 size={20} className="text-emerald-500" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h4 className="text-sm font-semibold text-foreground mb-1">
+                Code Generation Complete
+              </h4>
+              <p className="text-xs text-muted-foreground mb-3">
+                All artifacts have been generated successfully. You can browse the generated
+                code in the Code View tab.
+              </p>
+              <button
+                onClick={() => onSwitchTab && onSwitchTab('code')}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-emerald-500 text-white hover:bg-emerald-600 transition-colors shadow-sm"
+              >
+                <Code2 size={14} />
+                View Generated Code
+              </button>
             </div>
           </div>
         </div>

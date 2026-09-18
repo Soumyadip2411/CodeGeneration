@@ -171,6 +171,7 @@ export default function WorkflowDetailPage() {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('summary');
   const [starting, setStarting] = useState(false);
+  const prevStatusRef = useRef(null);
   const toast = useToast();
 
   useEffect(() => {
@@ -179,6 +180,7 @@ export default function WorkflowDetailPage() {
       try {
         const wf = await getWorkflow(workflowId);
         setWorkflow(wf);
+        prevStatusRef.current = wf?.status;
       } catch (e) {
         console.error('Failed to load workflow:', e);
       } finally {
@@ -188,16 +190,56 @@ export default function WorkflowDetailPage() {
     load();
   }, [workflowId]);
 
-  // Poll workflow status while a run is active - keeps status badge and footer in sync
+  // Poll workflow status while a run is active OR briefly after to catch post-stage transitions
   useEffect(() => {
     if (!workflow) return;
     const isActive = workflow.status === 'generating';
-    if (!isActive) return;
+    const justFinished = workflow.status === 'waiting_for_answers'
+      || workflow.status === 'questions_generated'
+      || workflow.status === 'plan_generated';
+    if (!isActive && !justFinished) return;
+
+    // Poll a bit faster for active runs, keep polling short after finish
     const interval = setInterval(() => {
       getWorkflow(workflowId).then(setWorkflow).catch(() => {});
-    }, 3000);
+    }, isActive ? 2500 : 3000);
     return () => clearInterval(interval);
   }, [workflowId, workflow?.status]);
+
+  // HITL auto-navigation: detect stage transitions and jump to the right tab
+  useEffect(() => {
+    if (!workflow) return;
+    const prev = prevStatusRef.current;
+    const curr = workflow.status;
+
+    if (prev === curr) return;
+
+    // Transition from generating -> waiting_for_answers / questions_generated:
+    // Gap analysis done, HITL needed - switch to Review Questions tab
+    if (
+      prev === 'generating' &&
+      (curr === 'waiting_for_answers' || curr === 'questions_generated')
+    ) {
+      toast.info('Gap analysis complete - questions need your review');
+      setActiveTab('questions');
+    }
+
+    // Transition from generating -> plan_generated:
+    // SDD done, HITL approval needed - switch to Intermediate Plan tab
+    if (prev === 'generating' && curr === 'plan_generated') {
+      toast.success('SDD generated - ready for your review and approval');
+      setActiveTab('plan');
+    }
+
+    // Transition from generating -> completed:
+    // Code generation done
+    if (prev === 'generating' && curr === 'completed') {
+      toast.success('Code generation complete');
+      setActiveTab('code');
+    }
+
+    prevStatusRef.current = curr;
+  }, [workflow, toast]);
 
   if (loading) {
     return (
