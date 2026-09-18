@@ -408,6 +408,7 @@ def start_run(
     user_id: str,
     input_file_ids: list,
     sync: bool = False,
+    stage: Optional[str] = None,
 ) -> Tuple[Optional[CodegenRun], Optional[str]]:
     """Create a run and submit it to the thread pool. Returns (run, error)."""
     run = CodegenRun(
@@ -415,6 +416,7 @@ def start_run(
         owner_id=owner_id,
         triggered_by=user_id,
         input_file_ids=input_file_ids,
+        stage=stage or "",
     )
 
     runs = get_run_repository()

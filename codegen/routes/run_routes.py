@@ -80,6 +80,7 @@ async def create_run(
         user_id=user_id,
         input_file_ids=input_file_ids,
         sync=sync,
+        stage=body.stage,
     )
 
     if run is None:
