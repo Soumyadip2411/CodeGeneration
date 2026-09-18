@@ -231,18 +231,33 @@ export default function WorkflowDetailPage() {
     setActiveTab('progress');
     try {
       let stage = 'gap_analysis';
-      if (workflow.status === 'plan_approved') {
+      if (workflow.status === 'questions_generated' || workflow.status === 'waiting_for_answers') {
+          stage = 'sdd_generation';
+      } else if (workflow.status === 'plan_approved') {
           stage = 'code_generation';
       }
       await startGeneration(workflow.id, stage);
       refreshWorkflow();
-      toast.success('Agent generation started');
+      toast.success(stage === 'code_generation' ? 'Code generation started' : 'Agent generation started');
     } catch (err) {
       toast.error(`Failed to start: ${err?.response?.data?.error?.message || err.message || 'Unknown error'}`);
       setActiveTab('summary');
     } finally {
       setStarting(false);
     }
+  };
+
+  const getPrimaryButtonText = () => {
+    if (workflow.status === 'created' || workflow.status === 'files_uploaded') {
+      return 'Generate SDD';
+    }
+    if (workflow.status === 'questions_generated' || workflow.status === 'waiting_for_answers') {
+      return 'Continue to SDD';
+    }
+    if (workflow.status === 'plan_approved') {
+      return 'Start Code Generation';
+    }
+    return hasRun ? 'Re-run Code Generation' : 'Start Code Generation';
   };
 
   function formatDate(iso) {
@@ -409,7 +424,7 @@ export default function WorkflowDetailPage() {
                 )}
               >
                 {starting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Activity className="w-4 h-4" />}
-                {hasRun ? 'Re-run Code Generation' : 'Start Code Generation'}
+                {getPrimaryButtonText()}
               </button>
             )
           )}
@@ -454,7 +469,7 @@ export default function WorkflowDetailPage() {
                 )}
               >
                 {starting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Activity className="w-4 h-4" />}
-                {hasRun ? 'Re-run Code Generation' : 'Start Code Generation'}
+                {getPrimaryButtonText()}
               </button>
             )
           )}
