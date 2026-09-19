@@ -367,9 +367,50 @@ export default function ReviewQuestionsSection({ workflow, onRefresh, onSwitchTa
     }
   };
 
+  // ---------------------------------------------------------------------------
+  // ALL HOOKS AND DERIVED STATE MUST RUN BEFORE ANY EARLY RETURNS.
+  // This ensures the hook count & order is identical on every render,
+  // which is required by React's Rules of Hooks.
+  // ---------------------------------------------------------------------------
+
+  // Group questions by normalized category (safe defaults when data is null)
+  const grouped = useMemo(() => {
+    const map = Object.fromEntries(CATEGORY_GROUPS.filter((g) => !g.foldInto).map((g) => [g.key, []]));
+    const questions = data?.questions || [];
+    for (const q of questions) {
+      const normalized = resolveCategory(q.category);
+      if (!map[normalized]) map.other.push(q);
+      else map[normalized].push(q);
+    }
+    for (const k of Object.keys(map)) {
+      map[k].sort((a, b) => {
+        const rank = (q) => (q.priority === 'critical' ? 0 : q.priority === 'suggested' ? 1 : 2);
+        if (rank(a) !== rank(b)) return rank(a) - rank(b);
+        if ((b.risk_score || 0) !== (a.risk_score || 0)) return (b.risk_score || 0) - (a.risk_score || 0);
+        return (b.confidence_score || 0) - (a.confidence_score || 0);
+      });
+    }
+    return map;
+  }, [data?.questions]);
+
+  // Derived progress/gate metrics (safe defaults when data is null)
+  const completionPct = typeof data?.completion_pct === 'number' ? data.completion_pct : 0;
+  const gapScore = data?.gap_score ?? 0;
+  const gapThreshold = data?.gap_threshold ?? 30;
+  const minCompletion = data?.min_analysis_completion ?? 80;
+  const riskThreshold = data?.risk_critical_threshold ?? 70;
+  const allCriticalResolved = !!data?.all_critical_resolved;
+  const canProceed = !!data?.can_proceed_to_sdd;
+  const completionPctMet = completionPct >= minCompletion;
+  const thresholdMet = gapScore <= gapThreshold;
+
   const needsGapAnalysis =
     !data?.questions?.length ||
     ['created', 'files_uploaded', 'summary_generated'].includes(workflow.status);
+
+  // ---------------------------------------------------------------------------
+  // EARLY RETURNS — guaranteed to come AFTER all hooks / derived state above.
+  // ---------------------------------------------------------------------------
 
   if (loading) {
     return (
@@ -427,36 +468,6 @@ export default function ReviewQuestionsSection({ workflow, onRefresh, onSwitchTa
       </div>
     );
   }
-
-  // Group questions by normalized category
-  const grouped = useMemo(() => {
-    const map = Object.fromEntries(CATEGORY_GROUPS.filter((g) => !g.foldInto).map((g) => [g.key, []]));
-    for (const q of data.questions) {
-      const normalized = resolveCategory(q.category);
-      if (!map[normalized]) map.other.push(q);
-      else map[normalized].push(q);
-    }
-    // Sort questions per-group: critical first, then by risk desc, then by confidence desc
-    for (const k of Object.keys(map)) {
-      map[k].sort((a, b) => {
-        const rank = (q) => (q.priority === 'critical' ? 0 : q.priority === 'suggested' ? 1 : 2);
-        if (rank(a) !== rank(b)) return rank(a) - rank(b);
-        if ((b.risk_score || 0) !== (a.risk_score || 0)) return (b.risk_score || 0) - (a.risk_score || 0);
-        return (b.confidence_score || 0) - (a.confidence_score || 0);
-      });
-    }
-    return map;
-  }, [data.questions]);
-
-  const completionPct = typeof data.completion_pct === 'number' ? data.completion_pct : 0;
-  const gapScore = data.gap_score ?? 0;
-  const gapThreshold = data.gap_threshold ?? 30;
-  const minCompletion = data.min_analysis_completion ?? 80;
-  const riskThreshold = data.risk_critical_threshold ?? 70;
-  const allCriticalResolved = !!data.all_critical_resolved;
-  const canProceed = !!data.can_proceed_to_sdd;
-  const completionPctMet = completionPct >= minCompletion;
-  const thresholdMet = gapScore <= gapThreshold;
 
   return (
     <div className="space-y-5">
