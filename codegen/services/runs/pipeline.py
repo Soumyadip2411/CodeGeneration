@@ -155,11 +155,13 @@ def execute_run(run: CodegenRun) -> CodegenRun:
 
     with event_bus.bind_run(run.id):
         runs.mark_running(run)
-        start_msg = "Starting code generation from the approved Solution Design Document (SDD)..."
         if stage == "gap_analysis":
-            start_msg = "Starting gap analysis - analyzing uploaded design documents..."
+            start_msg = "Starting gap analysis - analyzing uploaded design documents to surface questions before SDD drafting..."
         elif stage == "sdd_generation":
-            start_msg = "Starting SDD generation - synthesizing resolved Q&A and design inputs into System Design Document..."
+            start_msg = "Starting SDD generation - synthesizing resolved Q&A and design inputs into the authoritative System Design Document..."
+        else:  # code_generation
+            start_msg = "Starting code generation from the approved Solution Design Document (SDD) — the SDD is the sole authoritative specification; uploaded docs are supplementary context only."
+        logger.info("[pipeline] run=%s stage=%s start: %s", run.id, stage, start_msg)
         _emit_progress(run.id, 1, start_msg, status="running", stage=stage)
 
         # Workspace paths
@@ -438,10 +440,10 @@ def execute_run(run: CodegenRun) -> CodegenRun:
                     # Ultimate safety net: ensure questions list is always populated so HITL gate is testable
                     from services.workflows.models import ReviewQuestion, QuestionPriority, QuestionCategory
                     wf.review_questions = [
-                        ReviewQuestion(text="Confirm the uploaded documents correctly describe the full business process to be automated.", category=QuestionCategory.BUSINESS_RULES, priority=QuestionPriority.CRITICAL, confidence_score=99, risk_score=90, weight=25, suggested_answer="Verify the PDD covers end-to-end workflow. If gaps remain, extend the PDD and re-upload before proceeding.", rationale="Ensures the SDD is built against the correct scope."),
-                        ReviewQuestion(text="Confirm all input schemas, output schemas, and file formats have been correctly specified.", category=QuestionCategory.INPUTS_OUTPUTS, priority=QuestionPriority.CRITICAL, confidence_score=99, risk_score=85, weight=25, suggested_answer="List each input and output explicitly with columns/types/formats.", rationale="Prevents data-translation bugs in generated code."),
-                        ReviewQuestion(text="Confirm all security requirements (authentication, RBAC, PII handling, audit logging) are fully specified.", category=QuestionCategory.SECURITY, priority=QuestionPriority.CRITICAL, confidence_score=99, risk_score=90, weight=25, suggested_answer="Provide a role matrix, auth mechanism, PII masking rules, and audit requirements.", rationale="Security requirements are expensive to retrofit post-implementation."),
-                        ReviewQuestion(text="List any known edge cases, exception paths, or boundary conditions not covered in the current documents.", category=QuestionCategory.BUSINESS_RULES, priority=QuestionPriority.SUGGESTED, confidence_score=90, risk_score=65, weight=12, suggested_answer="Walk through each step's failure modes and document expected behavior for each.", rationale="Exception handling and edge cases are a common source of post-launch bugs."),
+                        ReviewQuestion(text="Confirm the uploaded design documents and resolved Q&A correctly describe the full business process to be automated.", category=QuestionCategory.BUSINESS_RULES, priority=QuestionPriority.CRITICAL, confidence_score=99, risk_score=90, weight=25, suggested_answer="Verify the uploaded specifications cover the end-to-end workflow. If gaps remain, update the SDD during the review stage before proceeding.", rationale="Ensures the SDD is built against the correct scope before code generation."),
+                        ReviewQuestion(text="Confirm all input schemas, output schemas, and file formats have been correctly specified.", category=QuestionCategory.INPUTS_OUTPUTS, priority=QuestionPriority.CRITICAL, confidence_score=99, risk_score=85, weight=25, suggested_answer="List each input and output explicitly with columns/types/formats; these will be reflected in the SDD.", rationale="Prevents data-translation bugs in code generated from the SDD."),
+                        ReviewQuestion(text="Confirm all security requirements (authentication, RBAC, PII handling, audit logging) are fully specified.", category=QuestionCategory.SECURITY, priority=QuestionPriority.CRITICAL, confidence_score=99, risk_score=90, weight=25, suggested_answer="Provide a role matrix, auth mechanism, PII masking rules, and audit requirements for inclusion in the SDD.", rationale="Security requirements are expensive to retrofit post-implementation; capturing them in the SDD ensures code generation respects them."),
+                        ReviewQuestion(text="List any known edge cases, exception paths, or boundary conditions not covered in the current documents.", category=QuestionCategory.BUSINESS_RULES, priority=QuestionPriority.SUGGESTED, confidence_score=90, risk_score=65, weight=12, suggested_answer="Walk through each step's failure modes and document expected behavior for each; these will be formalized in the SDD.", rationale="Exception handling and edge cases are a common source of post-launch bugs — documenting them in the SDD ensures the code generation agent covers them."),
                     ]
                     wf.current_gap_score = sum(q.weight for q in wf.review_questions if not q.is_resolved)
                     wf.status = "waiting_for_answers"
@@ -514,7 +516,6 @@ def execute_run(run: CodegenRun) -> CodegenRun:
                         logger.warning("[pipeline] failed to write sdd_preview_markdown to input dir: %s", _sdd_err)
                 if not sdd_seeded and wf.latest_run_id:
                     try:
-                        from services.storage import download_blob, artifact_blob_root
                         prev_blob_root = artifact_blob_root(workflow_id=wf.id, run_id=wf.latest_run_id)
                         sdd_candidate = f"{prev_blob_root}/SDD.md"
                         blob_data = download_blob(sdd_candidate)

@@ -298,10 +298,12 @@ export default function ReviewQuestionsSection({ workflow, onRefresh, onSwitchTa
   const toast = useToast();
 
   useEffect(() => {
+    let cancelled = false;
     async function load() {
       setLoading(true);
       try {
         const res = await getQuestions(workflow.id);
+        if (cancelled) return;
         setData(res);
         const initialAnswers = {};
         res.questions?.forEach((q) => {
@@ -309,14 +311,15 @@ export default function ReviewQuestionsSection({ workflow, onRefresh, onSwitchTa
         });
         setAnswers(initialAnswers);
       } catch (err) {
+        if (cancelled) return;
         toast.error('Failed to load questions');
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workflow.id]);
+    return () => { cancelled = true; };
+  }, [workflow.id, toast]);
 
   const handleAnswerChange = (id, text) => {
     setAnswers((prev) => ({ ...prev, [id]: text }));
@@ -345,7 +348,9 @@ export default function ReviewQuestionsSection({ workflow, onRefresh, onSwitchTa
   };
 
   const handleGenerateSdd = async () => {
-    // First save answers so SDD agent has the latest context
+    // First: switch to the Analysis tab immediately so user sees real-time progress
+    if (onSwitchTab) onSwitchTab('analysis');
+    // Then save answers so SDD agent has the latest context
     setSubmitting(true);
     try {
       const payload = Object.entries(answers).map(([id, ans]) => ({ question_id: id, answer: ans }));
@@ -353,34 +358,72 @@ export default function ReviewQuestionsSection({ workflow, onRefresh, onSwitchTa
       await startGeneration(workflow.id, 'sdd_generation');
       toast.success('SDD generation started');
       if (onRefresh) onRefresh();
-      if (onSwitchTab) onSwitchTab('analysis');
     } catch (err) {
       toast.error(`Failed to start: ${err?.response?.data?.error?.message || err.message || 'Unknown error'}`);
+      // On failure, bring user back to questions tab so they can retry
+      if (onSwitchTab) onSwitchTab('questions');
     } finally {
       setSubmitting(false);
     }
   };
 
+  const needsGapAnalysis =
+    !data?.questions?.length ||
+    ['created', 'files_uploaded', 'summary_generated'].includes(workflow.status);
+
   if (loading) {
-    return <div className="p-8 text-center"><Loader2 className="w-6 h-6 animate-spin mx-auto text-muted-foreground" /></div>;
+    return (
+      <div className="p-8 text-center">
+        <Loader2 className="w-6 h-6 animate-spin mx-auto text-muted-foreground mb-2" />
+        <p className="text-xs text-muted-foreground">Loading review questions…</p>
+      </div>
+    );
   }
 
-  if (!data?.questions?.length) {
+  if (needsGapAnalysis) {
     return (
       <div className="p-8 text-center border-2 border-dashed border-border rounded-xl">
-        <p className="text-muted-foreground">No review questions generated yet.</p>
-        <button
-          onClick={async () => {
-            await _startGen(workflow.id, 'gap_analysis');
-            toast.success('Gap analysis started');
-            if (onSwitchTab) onSwitchTab('analysis');
-            if (onRefresh) onRefresh();
-          }}
-          className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-primary text-primary-foreground hover:bg-primary/90"
-        >
-          <Sparkles size={14} />
-          Run Gap Analysis
-        </button>
+        <div className="p-3 rounded-2xl bg-secondary inline-block mb-3">
+          <Sparkles size={22} className="text-amber-500" />
+        </div>
+        <h3 className="text-sm font-semibold text-foreground mb-1">
+          {!data?.questions?.length ? 'No review questions generated yet' : 'Gap analysis not yet run'}
+        </h3>
+        <p className="text-xs text-muted-foreground mb-4 max-w-md mx-auto">
+          Run the AI gap analysis to identify ambiguous requirements, missing specifications,
+          and risk areas that must be clarified before drafting the Solution Design Document.
+        </p>
+        <div className="flex items-center justify-center gap-2 flex-wrap">
+          <button
+            onClick={async () => {
+              await _startGen(workflow.id, 'gap_analysis');
+              toast.success('Gap analysis started — you will be switched to the Analysis tab to watch progress.');
+              if (onSwitchTab) onSwitchTab('analysis');
+              if (onRefresh) onRefresh();
+            }}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-primary text-primary-foreground hover:bg-primary/90"
+          >
+            <Sparkles size={14} />
+            Run Gap Analysis
+          </button>
+          <button
+            onClick={async () => {
+              setLoading(true);
+              try {
+                const fresh = await getQuestions(workflow.id);
+                setData(fresh);
+                toast.success('Reloaded questions');
+              } catch {
+                toast.error('Reload failed');
+              } finally {
+                setLoading(false);
+              }
+            }}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold bg-secondary text-foreground hover:bg-secondary/80"
+          >
+            Reload
+          </button>
+        </div>
       </div>
     );
   }

@@ -164,9 +164,6 @@ export default function PlanReviewSection({ workflow, onRefresh, onSwitchTab }) 
   const contentRef = useRef(null);
   // Guard against auto-scroll on mount / content load. Only permit user-initiated jumps.
   const allowJumpRef = useRef(false);
-  // Save scroll container reference so we can restore position on tab mount
-  const outerScrollContainer = useRef(null);
-  const savedScrollTop = useRef(0);
 
   // Fetch SDD preview
   useEffect(() => {
@@ -201,28 +198,11 @@ export default function PlanReviewSection({ workflow, onRefresh, onSwitchTab }) 
     load();
   }, [workflow.id, workflow.status, workflow.latest_run_id, workflow.sdd_preview_markdown, toast]);
 
-  // On mount, find the outer scroll container (the page-level overflow-y-auto in WorkflowDetailPage)
-  // and preserve + restore its scrollTop so transitions from the review tab don't yank the user view.
+  // After mount, enable user-initiated TOC jumps. Until then, any scrollIntoView is blocked.
+  // This prevents content/mount side effects from yanking the user's scroll position.
   useEffect(() => {
-    let node = contentRef.current?.parentElement;
-    for (let i = 0; i < 10 && node; i++) {
-      const style = node.style || {};
-      const cs = typeof window !== 'undefined' && window.getComputedStyle ? window.getComputedStyle(node) : null;
-      const overflow = cs?.overflowY || style.overflowY || '';
-      if (overflow === 'auto' || overflow === 'scroll') {
-        outerScrollContainer.current = node;
-        // Restore any saved position
-        if (savedScrollTop.current > 0 && typeof node.scrollTo === 'function') {
-          try { node.scrollTo({ top: savedScrollTop.current, behavior: 'auto' }); } catch { /* ignore */ }
-        }
-        break;
-      }
-      node = node.parentElement;
-    }
-    // After mount, enable user-initiated jumps
     const t = setTimeout(() => { allowJumpRef.current = true; }, 350);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const sections = useMemo(() => extractSections(previewMarkdown), [previewMarkdown]);
@@ -418,7 +398,10 @@ export default function PlanReviewSection({ workflow, onRefresh, onSwitchTab }) 
       ) : previewMarkdown ? (
         <div className="grid grid-cols-1 lg:grid-cols-[240px_minmax(0,1fr)] gap-4">
           {/* TOC — outer wrapper clips radius; inner nav is fully scrollable */}
-          <div className="glass-card rounded-xl self-start lg:sticky lg:top-4 flex flex-col" style={{ maxHeight: 'calc(100vh - 220px)' }}>
+          <div
+            className="glass-card rounded-xl overflow-hidden lg:sticky lg:top-4 flex flex-col"
+            style={{ maxHeight: 'calc(100vh - 220px)' }}
+          >
             <button
               onClick={() => setTocOpen((v) => !v)}
               className="flex-shrink-0 w-full flex items-center justify-between px-4 py-3 border-b border-border/60 hover:bg-secondary/40 transition-colors rounded-t-xl"

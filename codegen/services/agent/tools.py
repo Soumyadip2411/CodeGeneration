@@ -56,8 +56,9 @@ def _emit_tool(tool_name: str, detail: str) -> None:
 def read_input_file(
     file_name: Annotated[str, Field(description="Name of a file in the input folder")],
 ) -> str:
-    """Read the full content of an uploaded input file (PDD, spec, etc.).
+    """Read the full content of an uploaded input file (SDD, design document, spec, etc.).
 
+    For code generation, SDD.md is the authoritative specification when present.
     For large files (>200 lines), prefer count_input_lines + read_input_lines in batches.
     """
     path = _workspace_input / file_name

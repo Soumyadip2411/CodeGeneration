@@ -283,8 +283,8 @@ async def export_sdd(
     user_id: str = Depends(current_user_id),
 ):
     """Generate a Solution Design Document (.docx) for a run from its input
-    files (the PDD / code spec that drove code generation). Runs the S-agent
-    SDD pipeline one-shot (auto-selects the recommended solution option).
+    files / approved SDD (the authoritative design spec that drove code generation).
+    Runs the S-agent SDD pipeline one-shot (auto-selects the recommended solution option).
     """
     blocked = _require_storage()
     if blocked:
@@ -329,8 +329,8 @@ async def export_sdd(
                 "error": {
                     "code": "NO_SPEC",
                     "message": (
-                        "No readable specification/PDD input files for this "
-                        "run to build an SDD from."
+                        "No readable specification/SDD input files for this "
+                        "run to build a final SDD export from."
                     ),
                 },
             },

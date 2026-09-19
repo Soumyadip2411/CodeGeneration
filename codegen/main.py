@@ -66,7 +66,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="EY RAID - CodeGen API",
     version="0.2.0",
-    description="Code Generation service - creates production code from PDD specifications.",
+    description="Code Generation service - creates production code from Solution Design Document (SDD) specifications (PDD -> HITL gap review -> SDD -> code).",
     lifespan=lifespan,
     openapi_tags=[
         {"name": "Health", "description": "Liveness and version checks."},
